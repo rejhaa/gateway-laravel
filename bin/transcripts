@@ -29,7 +29,8 @@ OMIT_SESSIONS = {'9dc11368-7a9c-49d4-afe7-4cddd64ac96d'}
 # A turn is the prompt and everything Claude answered until the next prompt.
 OMIT_TURNS = {'8b196360-80ad-42e1-a1e1-fe5182c559e8': {4}}
 
-TAG = re.compile(r'<(system-reminder|local-command-caveat)>.*?</\1>', re.S)
+# Injected context, and the notice Claude Code sends when a background agent finishes. Neither is typed by the user.
+TAG = re.compile(r'<(system-reminder|local-command-caveat|task-notification)>.*?</\1>', re.S)
 COMMAND = re.compile(r'<command-name>(.*?)</command-name>.*?<command-args>(.*?)</command-args>', re.S)
 STDOUT = re.compile(r'<local-command-stdout>(.*?)</local-command-stdout>', re.S)
 

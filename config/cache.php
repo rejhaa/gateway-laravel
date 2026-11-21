@@ -1,5 +1,8 @@
 <?php
 
+use App\Systems\Mail\Attachment;
+use App\Systems\Mail\Message;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Str;
 
 return [
@@ -15,7 +18,7 @@ return [
     |
     */
 
-    'default' => env('CACHE_STORE', 'database'),
+    'default' => env('CACHE_STORE', 'file'),
 
     /*
     |--------------------------------------------------------------------------
@@ -128,9 +131,14 @@ return [
     | This value determines the classes that can be unserialized from cache
     | storage. By default, no PHP classes will be unserialized from your
     | cache to prevent gadget chain attacks if your APP_KEY is leaked.
+    | The mailbox caches parsed messages, which are plain value objects.
     |
     */
 
-    'serializable_classes' => false,
+    'serializable_classes' => [
+        Message::class,
+        Attachment::class,
+        CarbonImmutable::class,
+    ],
 
 ];

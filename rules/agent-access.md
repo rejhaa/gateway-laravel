@@ -1,12 +1,25 @@
 # What the agent may read and propose in Odoo
 
-Odoo's own access rules decide what the signed-in user may do. These limits are narrower and apply to an agent acting as that user. A refusal under the purchasing policy names the section, whatever words the agent used for the change.
+Odoo's own access rules decide what the signed-in user, Riku Lindgren, may do. These limits are narrower and apply to the agent, which reads and proposes as him. The gateway checks every read and every proposal against the tables below in code. A denial under the purchasing policy names the section, whatever words the agent used for the change.
+
+Every table of models and fields here has the same shape. The first column is one model, and the second is a comma-separated list of its fields. A third column, where there is one, holds what applies to every field in that row. A model may have more than one row.
 
 ## Reads
 
-The agent reads only the models and fields below, so a read returns the same shape every time and nothing else leaves Odoo. `id` and `display_name` are readable on every model. A read returns at most 200 records.
+The agent reads Odoo with `odoo_search_read`, and only the models and fields below, so a read returns the same shape every time and nothing else leaves Odoo. `id` and `display_name` are readable on every model. A read returns at most 200 records, and 80 when the agent sets no limit.
 
-A domain is a list of `[field, operator, value]` terms joined by `&`, `|` or `!`. Each field path in it has to start with a readable field and follow relations to readable models, as in `[["order_id.name", "=", "P00101"]]`.
+A domain is a list of terms. A term is `[field, operator, value]` or one of the prefix operators `&`, `|` and `!`. Each part of a dotted field path has to be a readable field, and each part before the last has to lead to a readable model, as in `[["order_id.name", "=", "P00101"]]`.
+
+A term may use these operators:
+
+- `=`, `!=`
+- `>`, `>=`, `<`, `<=`
+- `in`, `not in`
+- `like`, `ilike`, `=like`, `=ilike`
+
+Every other operator is refused. That includes `any`, because its nested domain would read through fields outside the list.
+
+A refused read is an input error that names the field or the operator, and the gateway makes no call to Odoo for it. Records of a model the agent may write come back with `proposals`, the pending and applied proposals on that record.
 
 | Model | Fields |
 |---|---|
@@ -28,24 +41,24 @@ A domain is a list of `[field, operator, value]` terms joined by `&`, `|` or `!`
 
 ## Writes a proposal may contain
 
-| Model | Field | Value |
+A proposal writes one or more of these fields on one record. The Value column says what the fields in the row take. A date is written `YYYY-MM-DD`, a quantity is a number, and text is free text. A value in backticks is the only value the field takes.
+
+| Model | Fields | Value |
 |---|---|---|
-| `purchase.order.line` | `date_planned` | a date, `YYYY-MM-DD` |
-| `purchase.order.line` | `x_confirmed_qty` | a quantity |
-| `purchase.order.line` | `x_confirmed_date` | a date, `YYYY-MM-DD` |
+| `purchase.order.line` | `date_planned`, `x_confirmed_date` | date |
+| `purchase.order.line` | `x_confirmed_qty` | quantity |
 | `account.move` | `x_dispute` | `disputed` |
 | `account.move` | `x_dispute_note` | text |
 
-## Methods a proposal may call
+`x_dispute` takes only the value `disputed`. A proposal that writes any other value is denied under POL-4, because only finance lifts a dispute.
 
-| Model | Methods |
-|---|---|
-| `stock.picking` | `button_validate`, `message_post`, `activity_schedule` |
-| `purchase.order` | `message_post`, `activity_schedule` |
-| `mrp.production` | `message_post`, `activity_schedule` |
-| `account.move` | `message_post`, `activity_schedule` |
+Some fields are written together, as [approval-rules.md](approval-rules.md) describes. `x_confirmed_qty` and `x_confirmed_date` go in the same proposal, and so do `x_dispute` and `x_dispute_note`.
+
+A field or model that is on neither this table nor the table of never-written fields is denied as outside what the agent may write.
 
 ## Fields an agent never writes
+
+A proposal that writes one of these fields is denied under its policy section, with the section's sentence from the table after this one.
 
 | Model | Fields | Policy |
 |---|---|---|
@@ -58,22 +71,7 @@ A domain is a list of `[field, operator, value]` terms joined by `&`, `|` or `!`
 | `stock.move.line` | `quantity`, `picked` | POL-3 |
 | `mrp.production` | `date_start`, `date_finished` | POL-5 |
 
-## Methods an agent never calls
-
-| Methods | Policy |
-|---|---|
-| `button_cancel`, `action_cancel`, `unlink` | POL-6 |
-| `action_rfq_send`, `action_send_and_print`, `message_post_with_source`, `action_post`, `button_draft`, `action_register_payment` | POL-4 |
-| `button_confirm` | POL-2 |
-
-Two allowed operations are refused on the state of the record:
-
-- `button_validate` on a receipt where any move has `picked` false, because the warehouse has recorded no count for it (POL-3).
-- A write of `x_dispute` on a bill that is already disputed, to any value other than `disputed`, because that lifts or settles the dispute (POL-4).
-
-A field or method that is in neither the allowed list nor the denied list is refused as outside what the agent may write or call.
-
-## The sentence a refusal quotes
+## The sentence a denial quotes
 
 | Policy | Sentence |
 |---|---|

@@ -33,13 +33,19 @@ return [
     | users are actually retrieved out of your database or other storage
     | system used by the application. Typically, Eloquent is utilized.
     |
-    | Supported: "session"
+    | Supported: "session", and "passport" from Laravel Passport
     |
     */
 
     'guards' => [
         'web' => [
             'driver' => 'session',
+            'provider' => 'users',
+        ],
+
+        // Claude's OAuth bearer token on /mcp, issued by Passport.
+        'api' => [
+            'driver' => 'passport',
             'provider' => 'users',
         ],
     ],

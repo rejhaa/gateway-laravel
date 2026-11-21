@@ -99,21 +99,30 @@ Riku's browser                               ▼
 ```
 app/
   Gateway/                      system-independent core
-    ProposalService.php         propose, approve, reject, apply
-    Decision.php                tier, rule or policy section, reasons, next step
+    ProposalService.php         propose, approve, reject, recheck
+    ProposeResult.php           what propose answers the agent
+    Decision.php                tier, rule or policy section, reasons
     Tier.php                    enum: Rule, Human, Policy
     ProposalStatus.php          enum, section 5
     Process.php                 contract a business process implements
+    Processes.php               resolves a process by name from config/gateway.php
     Rule.php                    contract one rule implements
+    ProposedWrite.php           model, record id and values of one write
+    Facts.php                   contract for what a process read about a record
+    Evidence.php                the cited message, the quote and where it was found
+    DecisionRefused.php         exception for a decision the gateway did not take
     Audit.php                   writes audit rows
     Actor.php                   who acts and through which channel
     InputError.php              exception for input the agent can correct
     CardToken.php               signs and checks card tokens
+    ProposalPresenter.php       a proposal's words on the screens and the card
   Processes/
     InboundPurchasing/
       InboundPurchasing.php     the one place for this process's rules and access
       LineFacts.php             what the gateway reads about a purchase order line
-      LineFactsReader.php       reads LineFacts from Odoo and the mailbox
+      LineFactsReader.php       reads LineFacts from Odoo
+      BillFacts.php             what the gateway reads about a vendor bill
+      BillFactsReader.php       reads BillFacts from Odoo
       SharedConditions.php      the conditions both rules share
       Rules/ConfirmationAsOrdered.php
       Rules/PlannedDateUnderCap.php
@@ -128,6 +137,7 @@ app/
     Mail/Message.php, Attachment.php
     Mail/FileMailbox.php        reads .eml files from a directory
     Mail/PdfText.php            text layer through pdftotext
+  Console/Commands/GatewayReset.php   gateway:reset, section 9
   Mcp/
     Servers/GatewayServer.php
     Tools/GatewayTool.php       base class, section 10
@@ -136,17 +146,26 @@ app/
     Resources/ProposalsCard.php
   Http/Controllers/SignInController.php, CardController.php
   Http/Middleware/CardTokenOnly.php, RejectBearerToken.php
+  Listeners/RecordClientConnected.php   client.connected on a client's first token
   Livewire/Approvals.php, History.php, AuditLog.php
   Models/User.php, Proposal.php, AuditEntry.php
 config/gateway.php
-resources/views/mcp/proposals-card.blade.php
+routes/ai.php                   OAuth discovery and the MCP route
+routes/card.php                 the card's endpoints, outside the web group
+resources/views/mcp/proposals-card.blade.php       the card, which inlines the next two files
+resources/css/proposals.css     the block's look, shared by the pages and the card
+resources/js/proposals-card.js  the card's script
 resources/views/mcp/authorize.blade.php
+resources/views/layouts/app.blade.php               the pages' top bar
 resources/views/components/proposal-block.blade.php
+resources/views/components/mail-head.blade.php      a group's sender, subject, time and mail
+resources/views/components/audit-rows.blade.php     audit rows as a table
+resources/views/livewire/approvals.blade.php, history.blade.php, audit-log.blade.php
 rules/purchasing-policy.md, approval-rules.md, agent-access.md
 skills/inbound-exceptions/SKILL.md
 ```
 
-The core in `app/Gateway` knows proposals, tiers, decisions and the audit log. It knows nothing about Odoo fields or purchasing. A process supplies the rules and the access lists, and a system supplies reads and writes. A second process is a new directory under `app/Processes` and a line in `config/gateway.php`.
+The core in `app/Gateway` knows proposals, tiers, decisions and the audit log. It knows nothing about Odoo fields or purchasing. A process supplies the rules and the access lists, and it reads and writes its records through a system. The core reads the mailbox itself, and it tells a clear refusal from an unknown outcome by the `OdooException` types. A second process is a new directory under `app/Processes` and a line in `gateway.processes` in `config/gateway.php`, which maps each process name to its class. `Processes` resolves the class through the container, so a process gets its readers and clients injected. `propose` uses the process in `gateway.process`, and a decision uses the process the proposal names.
 
 ### The process contract
 
@@ -154,24 +173,37 @@ The core in `app/Gateway` knows proposals, tiers, decisions and the audit log. I
 interface Process
 {
     public function name(): string;                       // 'inbound-purchasing'
+    public function system(): string;                     // 'odoo'
 
-    /** Models and fields the agent may read, per system. */
+    /** Models and fields the agent may read: model => field => the model a dotted path continues into, or null. */
     public function readable(): array;
 
-    /** Denied, or null when the write may be proposed. */
+    /** Models and fields a proposal may write: model => field => the kind of value. */
+    public function writable(): array;
+
+    /** The markdown get_policy returns, file name => text. */
+    public function policyDocuments(): array;
+
+    /** Step 4. Denied, or null when the write may be proposed. Throws InputError for a value of the wrong type. */
     public function denial(ProposedWrite $write): ?Decision;
 
-    /** Facts the rules and the screens need, read by the gateway itself. */
-    public function facts(ProposedWrite $write, Evidence $evidence): Facts;
+    /** Step 5, and again at approval. Facts the rules and the screens need, read as the actor. Throws InputError when the record does not exist. */
+    public function facts(Actor $actor, ProposedWrite $write): Facts;
+
+    /** Step 6. The write the rules judge, after the pairing check and with an unchanged planned date dropped. */
+    public function prepare(ProposedWrite $write, Facts $facts): ProposedWrite;
 
     /** Rules in the order they are tried. */
     public function rules(): array;                       // list<Rule>
 
     /** Reason shown when no rule covers this kind of write at all. */
-    public function humanReason(ProposedWrite $write): ?string;
+    public function humanReason(ProposedWrite $write): string;
 
-    /** The markdown get_policy returns. */
-    public function policyDocuments(): array;
+    /** Writes the values as the actor. Throws OdooException. */
+    public function write(Actor $actor, ProposedWrite $write, int $proposalId): void;
+
+    /** The middle of the proposal's block on the screens (section 8). */
+    public function effect(Proposal $proposal): array;
 }
 
 interface Rule
@@ -179,17 +211,27 @@ interface Rule
     public function name(): string;                       // 'confirmation-as-ordered'
     public function applies(ProposedWrite $write): bool;  // is this the rule's kind of write
     /** Empty when the rule passes, otherwise every failed condition as a phrase. */
-    public function failures(ProposedWrite $write, Facts $facts): array;
+    public function failures(ProposedWrite $write, Facts $facts, Evidence $evidence): array;
     public function passReason(ProposedWrite $write, Facts $facts): string;
+}
+
+interface Facts
+{
+    public function label(): string;                      // record_label
+    public function values(array $fields): array;         // current values in the form a proposal states them
+    public function toArray(): array;                     // proposals.facts
+    public function matches(array $stored): bool;         // the stale check beyond the written values
 }
 ```
 
-Rules are pure. They receive facts and return phrases, and they make no HTTP call. That makes each condition testable with a plain object.
+`ProposedWrite` holds the model, the record id and the values. `Evidence` holds the cited message, the quote, whether it was found and where, every message newer than the cited one, and the id of an applied rule-tier proposal that already cites this message on this record. The core builds it at step 7. `Decision` holds the tier, the reasons, and the rule or the policy section.
 
-`InboundPurchasing` holds four constants and the rule list, so the whole process reads in one file:
+Rules are pure. They receive the write, the facts and the evidence and return phrases, and they make no HTTP call. That makes each condition testable with a plain object. A rule for a line receives `LineFacts`, and the process owns the reading of facts, their comparison at approval and the record label.
+
+`InboundPurchasing` holds the constants and the rule list, so the whole process reads in one file. Adding a rule is a class under `Rules/` and a line in `rules()`.
 
 ```php
-const READABLE = ['purchase.order' => ['name', 'partner_id', ...], ...];
+const READABLE = ['purchase.order' => ['name' => null, 'partner_id' => 'res.partner', ...], ...];
 const WRITABLE = [
     'purchase.order.line' => ['date_planned' => 'date', 'x_confirmed_qty' => 'quantity', 'x_confirmed_date' => 'date'],
     'account.move'        => ['x_dispute' => ['disputed'], 'x_dispute_note' => 'text'],
@@ -200,6 +242,7 @@ const NEVER = [
     ...
 ];
 const POLICY_SENTENCE = ['POL-1' => 'The requested date on a purchase order line ...', ...];
+const TOGETHER = [['x_confirmed_qty', 'x_confirmed_date'], ['x_dispute', 'x_dispute_note']];
 const SLIP_CAP_DAYS = 14;
 ```
 
@@ -207,10 +250,13 @@ const SLIP_CAP_DAYS = 14;
 
 ### Sign-in and OAuth
 
-- Passport is installed with `php artisan install:api --passport`. `routes/ai.php` holds `Mcp::oauthRoutes();` and `Mcp::web('/mcp', GatewayServer::class)->middleware('auth:api');`.
-- `users` has one row, Riku Lindgren, created by the seeder. `config/gateway.php` maps him to the Odoo login `riku` and the role "supply chain lead".
-- The `login` route signs Riku in on a GET and redirects to the intended URL. It shows nothing and asks nothing.
-- The Passport authorization view is `resources/views/mcp/authorize.blade.php`. It names the client and shows one button, "Connect", with a second, "Cancel".
+- Passport is installed with `php artisan install:api --passport`, which needs PHP's `sodium` extension. The `routes/api.php` it writes is removed, because nothing uses it, and its published `config/passport.php` is removed, because it held only the package defaults. The `api` guard in `config/auth.php` uses the `passport` driver, and `User` implements `OAuthenticatable` with `HasApiTokens`. The OAuth keys are `storage/oauth-*.key`, which git ignores, and `composer setup` generates them when they are missing.
+- `routes/ai.php` holds `Mcp::oauthRoutes();` and `Mcp::web('/mcp', GatewayServer::class)->middleware('auth:api');`. `bootstrap/app.php` renders exceptions on `/mcp` as JSON whatever the client accepts, so a request without a token gets 401 with the `WWW-Authenticate` header that points at the discovery document, and never a redirect to the sign-in.
+- `users` has one row, Riku Lindgren. `User::primary()` finds him or creates him from `config/gateway.php`, so the seeder and the sign-in work on a fresh database. `config/gateway.php` maps him to the Odoo login `riku` and the role "supply chain lead".
+- The `login` route signs Riku in on a GET, writes `user.signed_in` and redirects to the intended URL. It shows nothing and asks nothing.
+- The Passport authorization view is `resources/views/mcp/authorize.blade.php`, registered with `Passport::authorizationView()` in `AppServiceProvider`. It names the client and shows one button, "Connect", with a second, "Cancel", in the colours of `proposals.css`. Passport skips it when the client already holds a live token for Riku.
+- `App\Listeners\RecordClientConnected` listens for Passport's `AccessTokenCreated` and writes `client.connected`, with the client's name and id, when the token is the first one that client holds for Riku. A refreshed token is a second row, so it writes nothing.
+- `GatewayTool::client()` names the OAuth client of the request's Passport token. The tool rows and the `card.issued` row carry that name.
 - The Livewire pages sit behind the `auth` middleware, so opening them signs Riku in the same way.
 - The application trusts proxy headers (`$middleware->trustProxies(at: '*')` in `bootstrap/app.php`), and `APP_URL` is the Funnel URL. The OAuth discovery documents and the card's domain both come from the request URL, so a wrong host breaks both.
 
@@ -236,9 +282,11 @@ If claude.ai calls come back 403 from `ValidateOrigin`, add its origin to `mcp.a
 | Livewire approve and reject actions | web session cookie with CSRF token | a bearer token, a card token |
 | `GET /card/proposals`, `POST /card/proposals/{id}/decision` | `X-Card-Token` header | a bearer token, a session cookie |
 
-`RejectBearerToken` runs on the Livewire page routes and the card routes, and not on Passport's own `/oauth/*` routes, where a client may authenticate with that header. It answers 401 to any request that carries an `Authorization` header. The card token travels in its own header for the same reason, so a Passport token can never be mistaken for one.
+`RejectBearerToken` runs on the Livewire page routes, on Livewire's update endpoint where the actions run (`AppServiceProvider` registers that route with `Livewire::setUpdateRoute`), and on the card routes. It does not run on Passport's own `/oauth/*` routes, where a client may authenticate with that header. It answers 401 to any request that carries an `Authorization` header. The card token travels in its own header for the same reason, so a Passport token can never be mistaken for one.
 
-A card token is a signed string, not a database row. It holds the user id, a random token id, the purpose `card` and an expiry 12 hours ahead, with an HMAC under `APP_KEY`. The `card.issued` audit row records the token id with the OAuth client that fetched the card, and every card decision records the token id. `CardToken::issue()` and `CardToken::check()` are the only code that touches it.
+The card routes are in `routes/card.php`, which `bootstrap/app.php` loads outside the `web` group behind `RejectBearerToken`, `CardTokenOnly` and route model binding. Without the `web` group they have no session, so a session cookie counts for nothing there, and no CSRF check, which the card token replaces.
+
+A card token is a signed string, not a database row. It holds the user id, a random token id, the purpose `card` and an expiry `gateway.card.token_hours` ahead (12 by default), with an HMAC under `APP_KEY`. The `card.issued` audit row records the token id with the OAuth client that fetched the card, and every card decision records the token id. `CardToken::issue()` and `CardToken::check()` are the only code that touches it.
 
 ## 5. Data
 
@@ -254,10 +302,10 @@ SQLite. The gateway's own data is two tables. Passport adds its `oauth_*` tables
 | `model`, `record_id` | the record, such as `purchase.order.line` and 36 |
 | `record_label` | how a person names it, composed by the gateway, such as "P00104, V1 forged iron head (VG-HEAD-V1), 120 ordered" |
 | `values` | JSON of field to proposed value |
-| `before` | JSON of the same fields as read from Odoo when proposed |
+| `before` | JSON of the same fields as read from Odoo when proposed, in the form a proposal states them: a date as the Helsinki day, an empty value as null |
 | `facts` | JSON the screens and the approval check need: order name and state, product, requested date, ordered quantity, waiting manufacturing orders with start and need |
 | `message_id` | the cited message |
-| `quote`, `quote_source`, `quote_location` | the passage, where it was found (body or attachment name) and its first line (`p1.l17`) |
+| `quote`, `quote_source`, `quote_location` | the passage, where it was found (`body` or the attachment's name) and its first line (`p1.l17` in an attachment, `l3` in the body) |
 | `quote_status` | `found` or `unchecked` (no text layer) |
 | `title`, `summary` | the agent's words |
 | `tier` | `rule`, `human` or `policy` |
@@ -322,10 +370,10 @@ An Odoo write is audited twice. The gateway writes `odoo.write` with outcome `ok
    - A field or model on neither list is denied as outside what the agent may write.
    - `x_dispute` with any value other than `disputed` is denied under POL-4.
    - A value of the wrong type (a date that is not `YYYY-MM-DD`, a quantity that is not a number) is an input error.
-5. **Record.** The gateway reads the record from Odoo as Riku. A record that does not exist is an input error.
+5. **Record.** The gateway reads the record and its facts from Odoo as Riku, through `Process::facts()`. A record that does not exist is an input error.
 6. **Pairing.** `x_confirmed_qty` without `x_confirmed_date`, or the reverse, is an input error. `x_dispute` without `x_dispute_note` is one too. A `date_planned` equal to the line's current planned date is dropped from the write, so the proposal is judged as one that leaves the planned date alone.
 7. **Quote.** `QuoteChecker` looks for the quote in the message body and in each attachment's text. Found, it records the source and location. Not found in a message whose documents all have text, it is an input error. Not found when an attachment has no text layer, the proposal goes on with `quote_status` `unchecked`.
-8. **Rules.** The gateway reads the facts and tries each rule that applies. The first rule with no failures applies the write. With no passing rule, the proposal waits, and its reasons are the failures of the rule that applies, or `Process::humanReason()` when none does.
+8. **Rules.** The gateway tries each rule that applies on the facts and the evidence. The first rule with no failures applies the write. With no passing rule, the proposal waits, and its reasons are the failures of the rule that applies, or `Process::humanReason()` when none does.
 9. **Apply or store.** A rule-tier proposal is written to Odoo now and ends `applied` or `failed`. A human-tier proposal is stored `pending`.
 
 Claude can send two identical `propose` calls at once. The unique index on `dedup_key` decides the race, and the loser catches the violation and returns the winner's row.
@@ -344,16 +392,16 @@ Denied: a write to a never-written field, `x_dispute` to anything but `disputed`
 
 ### Shared conditions
 
-Both rules apply POL-1 to a write on one `purchase.order.line`. Each failed condition produces its phrase. The phrases are joined with "; " after "You are asked because".
+Both rules apply POL-1 to a write on one `purchase.order.line`. Each failed condition produces its phrase. The phrases are joined with "; " after "You are asked because". The gateway checks the rule tier switch before it tries any rule, so its phrase is shown alone, and `SharedConditions` holds the rest.
 
 | Condition | Phrase when it fails |
 |---|---|
 | The rule tier is on (`GATEWAY_RULE_TIER`) | "the rule tier is switched off" (shown alone) |
 | The order's `state` is `purchase` | "the order is not a confirmed purchase order" |
 | Only the three fields are written | "the change is more than the planned date and the confirmed quantity and date" |
-| The quote was found, names the line's product, and states each written value | "no quoted passage that names {product} states the {field} {value} unambiguously" |
+| The quote was found, names the line's product, and states each written value | "no quoted passage that names {product} states the {field} {value} unambiguously", once per written value |
 | The document has a text layer | "the document has no text layer, so the quote was not checked" |
-| The cited message names the order | "the message does not name the order {name} or the supplier's reference {partner_ref}" |
+| The cited message names the order | "the message does not name the order {name} or the supplier's reference {partner_ref}", without the reference when the order has none |
 | No newer uncited message names the order | "a later message ({subjects}) also names the order" |
 | No applied rule-tier proposal cites this message for this line | "the same message was already applied to the line by rule in proposal {id}" |
 | A written `x_confirmed_qty` equals `product_qty` | "the confirmed quantity {q} is not the {n} ordered" |
@@ -377,7 +425,7 @@ Applies when the write changes `date_planned`.
 |---|---|
 | The line has a requested date (`date_promised`) | "the line has no requested date to count the slip from" |
 | The slip from the requested date to the new planned date is under 14 days | "the slip of {n} days from the requested date is at or over the 14-day cap" |
-| No manufacturing order waits on the line | "{n} manufacturing order(s) wait on the line" |
+| No manufacturing order waits on the line | "{n} manufacturing orders wait on the line", or "1 manufacturing order waits on the line" |
 | A written `x_confirmed_date` equals the new planned date | "the confirmed date is not the new planned date" |
 
 A slip of exactly 14 days fails.
@@ -392,9 +440,12 @@ No rule applies. The reason is "a dispute on a vendor bill is decided by a perso
 
 - The line: `order_id`, `product_id`, `product_qty`, `date_planned`, `date_promised`, `x_confirmed_qty`, `x_confirmed_date`, `move_dest_ids`.
 - The order: `name`, `partner_ref`, `partner_id`, `state`.
-- The product's names: `default_code` and `name` on `product.product`, and `product_code` and `product_name` on the `product.supplierinfo` rows of the order's supplier.
-- Waiting manufacturing orders: the `stock.move` records in `move_dest_ids`, their `raw_material_production_id`, and each `mrp.production` with `name`, `date_start` and the move's `product_uom_qty` as its need.
-- The mailbox: the cited message's date, and every message newer than it that names the order.
+- The product's names: `default_code` and `name` on `product.product`, and `product_code` and `product_name` on the `product.supplierinfo` rows in its `seller_ids` that belong to the order's supplier and to this product or its template.
+- Waiting manufacturing orders: the `stock.move` records in `move_dest_ids`, their `raw_material_production_id`, and each `mrp.production` with `name`, `date_start` and the sum of its moves' `product_uom_qty` as its need.
+
+`BillFactsReader` reads a vendor bill's `name`, `ref`, `state`, `partner_id`, `amount_untaxed`, `currency_id`, `x_dispute` and `x_dispute_note`.
+
+The core reads the mailbox facts into `Evidence`: the cited message, and every message newer than it. The shared conditions decide which of them name the order, so the facts stay what Odoo holds and the stale check compares nothing else.
 
 A datetime from Odoo is converted from UTC to Europe/Helsinki before its date is taken. A planned date is written as the proposed day at `10:00:00` UTC, which is the same calendar day in Helsinki.
 
@@ -413,51 +464,55 @@ Treating a dotted date such as `06.11.2026` as ambiguous is the strict reading o
 
 ### Approving and rejecting
 
-`ProposalService::approve($proposal, $actor, $reason)`:
+`ProposalService::approve($proposal, $actor, $reason = null)` returns the proposal:
 
-1. Claim the proposal with one statement, `UPDATE proposals SET status = 'applying', decided_* WHERE id = ? AND status = 'pending'`. Zero rows changed means someone else decided, and the caller is told so. This makes a double click one write.
-2. Write the `proposal.approved` audit row.
-3. Read the record and its facts from Odoo again. Set `stale` and stop when any proposed field differs from `before`, when the order's name or state or the line's product differs from `facts`, or when the set of waiting manufacturing orders or one of their start dates differs. The first check stops an overwrite. The second stops a write to a different record that took the same id after a reseed. The third stops an approval given on facts the screen no longer shows truthfully.
+1. Claim the proposal with one statement, `UPDATE proposals SET status = 'applying', decided_* WHERE id = ? AND status = 'pending'`. Zero rows changed means someone else decided, and `DecisionRefused` tells the caller "Someone already decided this one." with a `decision.refused` audit row. This makes a double click one write.
+2. Write the `proposal.approved` audit row, in the same transaction as the claim.
+3. Read the record and its facts from Odoo again. Set `stale` and stop when any proposed field differs from `before`, when the order's name or state or the line's product differs from `facts`, or when the set of waiting manufacturing orders or one of their start dates differs. The first check stops an overwrite. The second stops a write to a different record that took the same id after a reseed. The third stops an approval given on facts the screen no longer shows truthfully. A record that no longer exists is `stale` too, and an Odoo error on this read is `failed` with its message.
 4. Write to Odoo.
-5. On success set `applied`. On a clear refusal (401, 403, 404, 422) set `failed` with Odoo's message. On a timeout or a 5xx the outcome is unknown, so the gateway reads the record once more. If it holds the proposed values the status is `applied`, and otherwise `failed` with "Odoo did not confirm the write".
+5. On success set `applied`. On a clear refusal (401, 403, 404, 422) set `failed` with Odoo's message. On a timeout or a 5xx the outcome is unknown, so the gateway reads the record once more. If it holds the proposed values the status is `applied`, and otherwise `failed` with "Odoo did not confirm the write". If that read fails too, the proposal stays `applying`.
 
-A rule-tier proposal goes through steps 2, 4 and 5 with the rule as the actor. The stale check is not needed, because the facts were read in the same request.
+A rule-tier proposal is stored as `applying` with its `proposal.created` and `proposal.applied_by_rule` rows in one transaction, then goes through steps 4 and 5 with the rule as the actor. The stale check is not needed, because the facts were read in the same request.
 
 A `stale` or `failed` proposal is not a dead end. Its line on the screen ends with "The agent can propose it again", and step 3 of the decision lets it.
 
-`reject()` requires a reason and sets `rejected` with the same claim statement.
+`reject($proposal, $actor, $reason)` requires a reason that is not blank and sets `rejected` with the same claim statement.
+
+`recheck($proposal, $actor)` is the "Check Odoo again" button. It reads the record of an `applying` proposal and sets `applied` when it holds the proposed values and `failed` with "Odoo does not hold the proposed values" when it does not. An `applying` proposal already holds its place in the unique index on `dedup_key`, so no replacement can exist and setting it `applied` cannot collide with one. Every move out of `applying` is conditional on the status still being `applying`, so a recheck and a late write cannot both decide it.
 
 ## 7. MCP server and tools
 
 `GatewayServer` has the name "Gateway", the seven tools and the card resource. Its `instructions` are three sentences: read the policy first, propose one change at a time with the quote it rests on, and the gateway decides who approves.
 
+Every tool acts as `Actor::agent()` with the Odoo login from `gateway.user` and the name of the OAuth client the token belongs to. Tools are thin. They validate, call `ProposalService`, `OdooReader`, the mailbox or the process, and shape the answer.
+
 All tools carry `#[IsReadOnly]` except `propose`. Every tool returns `Response::structured()`.
 
 ### whoami
 
-No input. Returns `name`, `role`, `odoo_login` and `today`. `today` is the real date unless `GATEWAY_TODAY` is set, for a case whose story happens on another day.
+No input. Returns `name`, `role`, `odoo_login` and `today`. `today` is the real date in `gateway.timezone` unless `GATEWAY_TODAY` is set, for a case whose story happens on another day.
 
 ### get_policy
 
-No input. Returns the three documents of the process as markdown: `purchasing-policy.md`, `approval-rules.md` and `agent-access.md`.
+No input. Returns `documents`, a list of `{name, markdown}` for the three documents of the process: `purchasing-policy.md`, `approval-rules.md` and `agent-access.md`.
 
 ### mail_list_messages
 
-No input. Returns the messages oldest first, each with `id`, `from`, `subject`, `date`, attachment names, and `proposals`, a list of `{id, status, title, record}` for the proposals that cite it.
+No input. Returns `messages`, oldest first, each with `id`, `from`, `subject`, `date` (ISO 8601 in `gateway.timezone`), `attachments` (the names), and `proposals`, a list of `{id, status, title, record}` for the proposals that cite it.
 
 ### mail_read_message
 
-Input `id`. Returns the headers, the body as text, and each attachment with `index`, `name`, `content_type`, `has_text_layer` and `lines`, a list of strings in the form `p1.l17: text`. It also returns the same `proposals` list.
+Input `id`. Returns `id`, `from`, `to`, `subject`, `date`, the `body` as text, and `attachments`, each with `index` (counted from 1), `name`, `content_type`, `has_text_layer` and `lines`, a list of strings in the form `p1.l17: text`. It also returns the same `proposals` list.
 
 ### odoo_search_read
 
-Input `model`, `domain`, `fields` and `limit` (at most 200, default 80). `OdooReader` checks the request against `Process::readable()` before it calls Odoo:
+Input `model`, `domain`, `fields` and `limit` (at most 200, default 80). `OdooReader` checks the request against `Process::readable()` before it calls Odoo. The readable list maps each model to its fields, and each field to the model a dotted path may continue into, or to null where a path stops:
 
 - The model and every field must be on the list. `id` and `display_name` are always readable.
 - A domain is a list of `&`, `|`, `!` and `[field, operator, value]` terms. Each part of a dotted field path must be readable, and each part before the last must lead to a readable model.
 - Operators are limited to `=`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `not in`, `like`, `ilike`, `=like`, `=ilike`. Others are refused, including `any`, whose nested domain would read through fields outside the list.
 
-A refusal is an input error that names the field or operator. Records of a writable model come back with `proposals`, the pending and applied proposals on that record.
+A refusal is an input error that names the field or operator. The answer is `records`. Records of a model in `Process::writable()` come back with `proposals`, a list of `{id, status, title, values, message_id}` for the pending, applying and applied proposals on that record.
 
 ### propose
 
@@ -483,15 +538,15 @@ The three `next` sentences:
 
 ### list_proposals
 
-Input `status`, optional, one of the statuses or `all` (the default). Returns the proposals grouped by message, each with `id`, `title`, `record`, `values`, `status`, `tier`, `reasons`, `decided_by`, `decided_via`, `decided_at`, `decision_reason` and `error`. It carries `#[RendersApp(resource: ProposalsCard::class)]`, so claude.ai draws the card under it. The text the agent reads says how many wait and repeats that Riku decides.
+Input `status`, optional, one of the statuses or `all` (the default). Returns `waiting` (how many proposals are pending), `note`, and `messages`, the proposals grouped by message, oldest message first. Each group has `message` (`id`, `from`, `subject`, `date`) and `proposals`, each with `id`, `title`, `record`, `values`, `status`, `tier`, `reasons`, `decided_by`, `decided_via`, `decided_at`, `decision_reason` and `error`. `note` says how many wait and repeats that Riku decides them and the agent cannot. It carries `#[RendersApp(resource: ProposalsCard::class)]`, so claude.ai draws the card under it.
 
 ### Tool errors
 
-An input error returns `Response::error()` with a sentence that says what to correct. Any other failure returns "The gateway could not do this: {plain reason}" and is reported with its context. Neither exposes a stack trace, a key or Odoo's `debug` field.
+An input error returns `Response::error()` with a sentence that says what to correct. Any other failure returns "The gateway could not do this: {plain reason}" and is reported with its context. The plain reason is the message of an `OdooException`, which is written for a person, and otherwise "something unexpected went wrong, and it is logged for the developers." Neither exposes a stack trace, a key or Odoo's `debug` field.
 
 ## 8. Screens
 
-The same Blade component, `proposal-block`, draws a proposal on the card and on the web page. The card's JavaScript renders the same structure from JSON. Every string the agent wrote is set with `textContent` or Blade's escaped output, never as HTML.
+The Blade component `proposal-block` draws a proposal on the web pages, and the card's script (`resources/js/proposals-card.js`) draws the same structure from JSON. Both take their look from `resources/css/proposals.css`, which `app.css` imports and the card's view inlines. Every string the agent wrote is set as a text node or through Blade's escaped output, never as HTML.
 
 The target is 80 to 120 words before the buttons. Facts go in rows, and sentences go in folds.
 
@@ -519,6 +574,21 @@ If you say yes, Odoo changes this
 [ Yes, do it ]  [ No ]
 ```
 
+The heading "If you say yes, Odoo changes this" and the reason field with the buttons appear only while the proposal is pending. A decided block that is opened in the history shows the same middle without them.
+
+`Effect::of($proposal)` returns the block's middle as plain data, so the Blade component and the card's JSON draw the same words: `kind` (muted, null when the record line names its kind), `record`, `rows` (each with `label`, `now`, `after`, `note` and `warning`, and `now` null for a denied proposal) and `notice`. The core reaches it through `Process::effect()`.
+
+`App\Gateway\ProposalPresenter` holds every other word of the screens, so the card's JSON, the Blade component and the web pages share one source:
+
+- `block(Proposal)` is one block as data: `id`, `title`, `summary`, `status`, `tier`, `because` ("You are asked because {reasons joined with "; "}." on a human-tier proposal, otherwise null), `reasons`, `effect`, `quote` (`text`, `source`, `document` with the body named "the mail body", `location`, `status`, and `check`, "found in the document", "not checked, the document has no text layer", or null when the quote was never checked, as on a denied proposal), `line` (the collapsed line below, null while pending), and `rule`, `policy_section`, `decided_by`, `decided_via`, `decided_at` (ISO 8601), `decision_reason` and `error`.
+- `byMessage(proposals)` groups proposals by the message they cite, oldest message first, and `groups(proposals)` does the same with blocks. Both take `newestFirst`, which the history sets. A group's `message` has `id`, `from`, `sender` (the display name), `subject`, `date` (ISO 8601), `day` ("5 Nov"), `time` ("5 Nov 2026, 11:12"), `body` and `attachments` (the names). A message no longer in the mailbox comes last with only its id. A group also has `pending`, the count of its pending proposals.
+- `line(Proposal)`, `outcome(Proposal)` (the sentence the card gives the agent after a decision), `heading(n)` and `waitingNote(n)` (the note `list_proposals` gives the agent).
+- `appliedByRule()` is the list under "Applied by rule ({n})": every applied rule-tier proposal with `id`, `title` and `rule`.
+- `odooTrouble(OdooException)` is the sentence a screen shows when Odoo failed in a way the service did not settle: the exception's message and "Try again in a moment."
+- `card()` is what `GET /card/proposals` answers.
+
+Times on the screens are in `gateway.timezone`.
+
 Wording rules, all produced by `Effect`:
 
 - The record line is the kind in muted text and then the record. A line reads "{order}, {product} ({code}), {qty} ordered". A bill reads "{Draft or Posted} vendor bill {ref} from {supplier}, {amount} {currency} untaxed".
@@ -531,9 +601,9 @@ Wording rules, all produced by `Effect`:
 - Each waiting manufacturing order is a row. The label is "{name} needs {qty}", Now is "starts {date}", and After is "line arrives {n} days after its start", "line arrives {n} days before its start", "line arrives on its start", or "planned date unchanged".
 - A dispute block shows this sentence in the open: "A disputed bill is not paid until a credit note or a confirmed delivery closes the dispute. Only finance lifts it (POL-4)."
 
-The fold "Why, and where it says so" holds the quote in quotation marks with its document and location, then "found in the document" or "not checked, the document has no text layer", then every condition of the rule that applies with a pass or fail mark.
+The fold "Why, and where it says so" holds the quote in quotation marks, then its document and location, then the `check` line, then the gateway's reasons as a list.
 
-The block has a 3px bar on its left in the accent colour. It turns green when applied and red when rejected, failed or stale.
+The block has a 3px bar on its left in the accent colour. It turns green when applied, red when rejected, failed or stale, and muted when denied.
 
 After a decision the block collapses to its title and one line:
 
@@ -542,10 +612,11 @@ After a decision the block collapses to its title and one line:
 | applied after approval | "Approved by Riku at 14:02. Written to Odoo." |
 | applied by rule | "Applied by rule planned-date-under-cap at 13:58." |
 | rejected | "Rejected by Riku at 14:02: "{reason}"" |
-| stale | "Approved at 14:02, but the record had changed in Odoo. Nothing was written." |
-| failed | "Approved at 14:02. Odoo refused: {message}" |
+| stale | "Approved at 14:02, but the record had changed in Odoo. Nothing was written. The agent can propose it again." |
+| failed after approval | "Approved at 14:02. Odoo refused: {message}. The agent can propose it again." |
+| failed by rule | "Applied by rule planned-date-under-cap at 13:58. Odoo refused: {message}. The agent can propose it again." |
 | applying | "Being written to Odoo." |
-| denied | "Denied under POL-2: {sentence}" |
+| denied | "Denied under POL-2: {sentence}", or "Denied, because {reason}." with no section |
 
 ### The card
 
@@ -554,11 +625,11 @@ One card holds everything that waits, grouped by mail.
 ```
 3 decisions wait for you
 
-Tai-Yuan Forge & Shaft · Order confirmation P00104, partial · 5 Nov
+Tai-Yuan Forge & Shaft · Order confirmation P00104, partial · 5 Nov 2026, 11:12
 ▸ The mail
   [proposal block]
 
-Saigon Grip Works · Packing list, your order P00101 · 3 Nov
+Saigon Grip Works · Packing list, your order P00101 · 3 Nov 2026, 08:40
 ▸ The mail
   [proposal block]
   [proposal block]
@@ -568,7 +639,7 @@ Saigon Grip Works · Packing list, your order P00101 · 3 Nov
 ```
 
 - The heading counts what waits: "{n} decisions wait for you", "1 decision waits for you", or "Nothing waits for you".
-- Each group starts with sender, subject and date. The fold "The mail" shows the body and the attachment names.
+- Each group starts with sender, subject and the message's `time`. The fold "The mail" shows the body and the attachment names.
 - "Yes to all {n}" appears on a group with more than one pending proposal. It sends one decision per proposal, and each gets its own audit rows.
 - "No" stays disabled until the reason field has text. While a decision is sent the pressed button reads "Recording".
 - "Applied by rule ({n})" lists one line per change, its title and rule name.
@@ -576,10 +647,32 @@ Saigon Grip Works · Packing list, your order P00101 · 3 Nov
 
 How it works:
 
-1. `ProposalsCard::handle()` renders the Blade view with the gateway's URL and a new card token in a script tag. A host may cache a card's HTML, so the first thing to check in section 13 is whether claude.ai fetches the resource again for each card. If it serves a cached copy past the token's 12 hours, the card falls back to its expired state, which shows the list's last known content read-only with "Decide on the approval page" and the link.
-2. The card calls `GET {gateway}/card/proposals` with the token and draws the result. It takes nothing from the tool result, so a reloaded card shows the current state.
+1. `ProposalsCard::handle()` renders the Blade view with the gateway's URL and a new card token in a script tag. A host may cache a card's HTML, so the first thing to check in section 13 is whether claude.ai fetches the resource again for each card. If it serves a cached copy past the token's 12 hours, the card shows its expired state, the sentence "This card has expired. Decide on the approval page." and the link. A token that expires while the card is open keeps the last known content on screen without buttons, under the same sentence.
+2. The card calls `GET {gateway}/card/proposals` with the token in `X-Card-Token` and draws the result. It takes nothing from the tool result, so a reloaded card shows the current state.
 3. A button calls `POST {gateway}/card/proposals/{id}/decision` with `{decision: "approve" | "reject", reason}`.
-4. The card redraws from the response, then calls `app.updateModelContext` with one sentence, such as "Riku approved proposal 12 and it was written to Odoo." The agent treats `list_proposals` as the authority.
+4. The card redraws the block from the response, then calls `app.updateModelContext` with every `sentence` this card has produced, such as "Riku approved proposal 12 and it was written to Odoo." The agent treats `list_proposals` as the authority.
+
+Outside a host, such as a page opened on its own, the card has no bridge. It still reads and decides, and "Open the full page" is a plain link.
+
+`GET /card/proposals` answers:
+
+```json
+{
+  "heading": "2 decisions wait for you",
+  "waiting": 2,
+  "groups": [
+    {
+      "message": {"id": "…", "from": "…", "sender": "…", "subject": "…", "date": "2026-11-05T11:12:00+02:00", "day": "5 Nov", "body": "…", "attachments": ["TYF-OC-26-0918.pdf"]},
+      "pending": 2,
+      "proposals": [{"id": 12, "title": "…", "summary": "…", "status": "pending", "tier": "human", "because": "…", "reasons": ["…"], "effect": {…}, "quote": {…}, "line": null, "rule": null, "policy_section": null, "decided_by": null, "decided_via": null, "decided_at": null, "decision_reason": null, "error": null}]
+    }
+  ],
+  "applied_by_rule": [{"id": 9, "title": "…", "rule": "confirmation-as-ordered"}],
+  "page_url": "https://…/"
+}
+```
+
+The groups hold only pending proposals. A decision answers `{error, sentence, proposal, heading, waiting}`, where `proposal` is the block after the decision. It is 200 with `error` null on a decision taken, 409 with the sentence in `error` when the gateway refused it (already decided, or a rejection without a reason), and 502 when Odoo failed in a way the service did not settle. Anything unexpected is reported and answers 500 with `error` and the other fields null. A missing or bad card token answers 401 with `{"error": "This card has expired. Decide on the approval page."}`, and an `Authorization` header answers 401 before the token is looked at.
 
 The resource declares `connectDomains: [config('app.url')]`. `config/cors.php` allows the origin pattern `https://*.claudemcpcontent.com` on `card/*`, the methods GET and POST, the headers `X-Card-Token` and `Content-Type`, and no credentials.
 
@@ -598,23 +691,25 @@ The card uses the host's theme variables with these fallbacks, and follows `pref
 | warn | `#9a5b00` | `#f0b552` |
 | bad | `#b3261e` | `#ff8a80` |
 
-Body text is 14px with a 1.45 line height, the title 16px semibold, section headings 13px semibold and muted. Buttons are 32px tall with a 6px radius, and the primary one is filled with the accent colour. Long text wraps. Below 360px the grid's value columns shrink and its gap goes to 8px.
+Body text is 14px with a 1.45 line height, the title 16px semibold, section headings 13px semibold and muted. Buttons are 32px tall with a 6px radius, and the primary one is filled with the accent colour. Long text wraps. On a wide screen the grid's label column is at least 9.5em wide, so the grids of the blocks line up. Below 480px each label sits on its own line above its Now and After values, and below 360px the gap between the values goes to 8px.
 
 ### Web pages
 
 Three Livewire pages share one layout with a top bar: "Approvals", "History", "Audit log", and "Riku Lindgren, supply chain lead" on the right. They use the Tailwind 4 setup the repository already has.
 
 - **Approvals** (`/`). The same groups and blocks as the card, with the folds available and absolute times. Empty, it reads "Nothing waits for your answer." It refreshes with `wire:poll` every 5 seconds.
-- **History** (`/history`). Every proposal, newest first, grouped by mail, in the collapsed form. Filters for status and tier. A row opens to the full block with its audit rows under "Audit trail for this proposal".
-- **Audit log** (`/audit`). Columns Time, Actor, Channel, Event, Tool, Proposal, Outcome, Detail. Filters for actor, event and proposal id. Newest first, paginated.
+- **History** (`/history`). Every proposal, newest first, grouped by mail, in the collapsed form. The filters "Status" and "Tier" each start with "All". Clicking a title opens the full block with its audit rows under "Audit trail for this proposal". The filters and the open proposal are in the URL.
+- **Audit log** (`/audit`). Columns Time, Actor, Channel, Event, Tool, Proposal, Outcome, Detail. The Detail column shows one line per key. The filters are "Actor" and "Event", each starting with "All", and "Proposal", a proposal id. Newest first, 50 rows to a page, with "Newer" and "Older" around "Page {n}". A proposal id links to that proposal in the history.
+
+The actions use `Actor::web()` for Riku's Odoo login. A refused decision shows the `DecisionRefused` sentence under the block, and an Odoo failure the service did not settle shows `odooTrouble()`. Every fold keeps its open state across the 5-second refresh, and so does a reason being typed.
 
 ## 9. Systems
 
 ### Odoo
 
-`OdooClient` has `searchRead()`, `read()` and `write()`. It builds each request with `Http::baseUrl(config('gateway.odoo.url'))->withToken($key, 'bearer')->acceptJson()->connectTimeout(3)->timeout(30)`. It reads the key from the file at `config('gateway.odoo.keys_file')` on each call, because a reseed replaces it.
+`OdooClient` has `searchRead()`, `read()` and `write()`. It builds each request with `Http::baseUrl(config('gateway.odoo.url'))->withToken($key, 'bearer')->acceptJson()->connectTimeout(3)->timeout(30)`. It reads the key from the file at `config('gateway.odoo.keys_file')` on each call, because a reseed replaces it. A login with no key in the file is `OdooAuthenticationFailed`, and nothing is sent. Every method takes the `Actor` that its audit row names, and `read()` and `write()` take the proposal id the row is about.
 
-- `composer dev` sets `PHP_CLI_SERVER_WORKERS=4`, so a slow Odoo call does not freeze the card and the pages behind it.
+- `composer dev` sets `PHP_CLI_SERVER_WORKERS=4`, so a slow Odoo call does not freeze the card and the pages behind it. `php artisan serve` starts workers only without its file watcher, so `routes/console.php` gives `php artisan dev` the server command `serve --no-reload`.
 - Reads retry twice with backoff on a connection error or a 502, 503 or 504.
 - A write is never retried after the request was sent. It retries only when the connection could not be opened.
 - Every call writes an `odoo.read` or `odoo.write` audit row with the model, the method, the field names and the outcome.
@@ -630,6 +725,8 @@ Exceptions, all extending `OdooException`, each with `context()` returning the m
 | `OdooRejected` | 422 | notice |
 | `OdooUnexpected` | 500, a body that is not JSON, anything else | error, with Odoo's `debug` trimmed to 2,000 characters |
 
+`bootstrap/app.php` sets these levels with `$exceptions->level()`.
+
 ### Mailbox
 
 ```php
@@ -641,15 +738,15 @@ interface Mailbox
 }
 ```
 
-`Message` has `id`, `from`, `to`, `subject`, `date`, `body` and `attachments`. `Attachment` has `name`, `contentType`, `hasTextLayer` and `lines`. A message's id is the first 12 hex characters of the sha256 of its `Message-ID` header, so nothing in a tool's output shows where mail comes from.
+`Message` has `id`, `from`, `to`, `subject`, `date`, `body` and `attachments`. `Attachment` has `name`, `contentType`, `hasTextLayer` and `lines`, a map of location (`p1.l17`) to text. A text attachment is numbered as one page, and any other type that is not a PDF has no text layer. A message's id is the first 12 hex characters of the sha256 of its `Message-ID` header, so nothing in a tool's output shows where mail comes from.
 
-`FileMailbox` caches each parsed message and its attachment text under the file's path and modification time, because every `propose` looks through the mailbox for newer messages. It reads every `.eml` in `config('gateway.mailbox.path')` with `zbateson/mail-mime-parser`, which needs no PHP extension. The service provider binds `Mailbox` to it. A real mailbox is another class behind the same interface.
+`FileMailbox` caches each parsed message and its attachment text under the file's path and modification time, because every `propose` looks through the mailbox for newer messages. It reads every `.eml` in `config('gateway.mailbox.path')` with `zbateson/mail-mime-parser`, which needs no PHP extension. The service provider binds `Mailbox` to it. `config/cache.php` allows `Message`, `Attachment` and `CarbonImmutable` in `serializable_classes`, so the file cache can read a cached message back. A real mailbox is another class behind the same interface.
 
-`PdfText` runs `pdftotext -layout -enc UTF-8 <file> -` through Symfony Process, splits pages on the form feed, collapses runs of spaces, drops empty lines, and numbers what is left as `p<page>.l<line>`. A document with fewer than 20 characters of text per page has no text layer. A missing binary or a failed run throws and is reported, and the attachment is returned with no lines and `hasTextLayer` false.
+`PdfText` pipes the PDF to `pdftotext -layout -enc UTF-8 - -` through Laravel's `Process` facade, which wraps Symfony Process and can be faked in tests. It splits pages on the form feed, collapses runs of spaces, drops empty lines, and numbers what is left as `p<page>.l<line>`. A document with fewer than 20 characters of text per page has no text layer and gets no lines. A missing binary or a failed run throws and is reported, and the attachment is returned with no lines and `hasTextLayer` false.
 
 ### Resetting between runs
 
-`bin/odoo seed` gives every record a new id, and the gateway's proposals would then point at other records. `php artisan gateway:reset {case?}` is the one way to start a run. It runs `bin/odoo seed` with the case, then drops and recreates `proposals` and `audit_log`. It leaves the `oauth_*` tables alone, so the connector stays authorized. It refuses to run unless `APP_ENV` is `local`, because it is the one thing that empties the audit log.
+`bin/odoo seed` gives every record a new id, and the gateway's proposals would then point at other records. `php artisan gateway:reset {case?}` is the one way to start a run. It runs `bin/odoo seed` with the case, then drops and recreates `proposals` and `audit_log`. It leaves the `oauth_*` tables alone, so the connector stays authorized. It refuses to run unless `APP_ENV` is `local`, because it is the one thing that empties the audit log. When the seed fails it stops there and leaves both tables as they were. It recreates the tables by running the two migrations' `down()` and `up()`, so the triggers come back with them, and it keeps `users`.
 
 ### Configuration
 
@@ -658,13 +755,17 @@ interface Mailbox
 | Key | Default |
 |---|---|
 | `gateway.process` | `inbound-purchasing` |
+| `gateway.processes` | `inbound-purchasing` mapped to `InboundPurchasing::class` |
 | `gateway.rule_tier` (`GATEWAY_RULE_TIER`) | `true` |
 | `gateway.today` (`GATEWAY_TODAY`) | none |
+| `gateway.timezone` (`GATEWAY_TIMEZONE`) | `Europe/Helsinki`, the zone of `today` and of times on the screens |
 | `gateway.user` | Riku Lindgren, supply chain lead, Odoo login `riku` |
 | `gateway.odoo.url` (`ODOO_URL`) | `http://localhost:8070` |
 | `gateway.odoo.keys_file` | `odoo/data/inbound-users.json` |
 | `gateway.mailbox.path` (`GATEWAY_MAILBOX_PATH`) | `cases/demo/demo-mailbox/messages` |
-| `gateway.card.token_hours` | 12 |
+| `gateway.card.token_hours` (`GATEWAY_CARD_TOKEN_HOURS`) | 12 |
+
+`config/mcp.php` sets `mcp.allowed_origins` from `MCP_ALLOWED_ORIGINS`, a comma-separated list that is empty by default. The package's other `mcp.*` settings keep their defaults.
 
 ## 10. Errors and logging
 
@@ -676,7 +777,7 @@ interface Mailbox
   - Anything else calls `report($e)`, writes `tool.failed`, and returns the plain sentence. This runs whatever `APP_DEBUG` is, which closes the gap where the package logs nothing.
 - Each exception class has a `context()` method, so `report()` logs structured fields.
 - A failed audit insert stops the operation. An Odoo write never happens without its audit row.
-- Livewire actions and the card controller map `OdooException` and "already decided" to a sentence on the screen and report everything unexpected.
+- Livewire actions and the card controller map `OdooException` and `DecisionRefused` to a sentence on the screen and report everything unexpected. The card controller reports an `OdooException` too.
 - Logs go to the default `stack` channel, and `php artisan pail` tails them in development. Keys, tokens and the Authorization header are never logged.
 
 ## 11. Rule files and the skill
@@ -731,7 +832,7 @@ One dataset per rule. Each row starts from a `LineFacts` that passes and changes
 | it fails with no requested date | a null date is read as a zero slip |
 | it fails with one manufacturing order waiting | a date move reaches production with no person |
 | it fails when the confirmed date differs from the new planned date | the two dates drift apart by rule |
-| each shared condition fails alone and yields its phrase (9 rows) | a condition is dropped or its phrase is wrong |
+| each shared condition fails alone and yields its phrase (8 rows in `SharedConditionsTest`, and the rule tier switch in `ProposalServiceTest`) | a condition is dropped or its phrase is wrong |
 | a partial quantity fails both rules | a short confirmation is recorded as full |
 | the rule tier off sends a passing write to Riku | the switch does nothing |
 | a second proposal from the same message on the same line waits | one document is applied twice by rule |
@@ -783,13 +884,15 @@ One test per tool through `GatewayServer::actingAs($riku)->tool(...)`, plus the 
 | `list_proposals` returns who decided, when and why | the agent cannot tell Riku's answer |
 | the server registers exactly the seven tools | someone adds a tool that approves |
 | an exception in a tool is reported and audited with `APP_DEBUG` on | a failure disappears in development |
+| the card resource holds a token the card endpoints accept, and writes `card.issued` with its id | a card that cannot read, or a token with no record of who got it |
 
 ### HTTP and decisions (`tests/Feature/Http`)
 
 | Test | Bug it catches |
 |---|---|
-| `POST /mcp` without a token answers 401 | the server is open |
-| a 2026-07-28 `tools/call` with the three headers and a token succeeds | the newest protocol is broken by middleware or auth |
+| `POST /mcp` without a token answers 401, also to a client that does not ask for JSON | the server is open, or a client is sent to the sign-in page |
+| a 2026-07-28 `tools/call` with the three headers and a token from the real OAuth flow succeeds and names the client | the newest protocol is broken by middleware or auth |
+| connecting writes `client.connected` once, and a refresh writes nothing | a connection leaves no trace, or every refresh looks like one |
 | both decision endpoints reject a Passport bearer token | Claude's token approves |
 | the card endpoint rejects an expired and a tampered token | an old card approves forever |
 | approving writes to Odoo once when called twice | a double click writes twice |
@@ -804,6 +907,14 @@ One test per tool through `GatewayServer::actingAs($riku)->tool(...)`, plus the 
 | the card shows an agent-written title containing HTML as text | the agent injects script into the approval screen |
 
 The last one is a test of the JSON endpoint and the Blade component. The card's own script is checked in the manual run.
+
+### Reset (`tests/Feature/GatewayResetTest.php`)
+
+| Test | Bug it catches |
+|---|---|
+| `gateway:reset` seeds Odoo, empties both tables, keeps the user and the triggers | a reset leaves old proposals pointing at new record ids |
+| `gateway:reset` refuses outside `local` | the audit log is emptied in production |
+| a failed seed leaves both tables alone | a half reset loses the log of a run that still matches Odoo |
 
 ## 13. Verification
 

@@ -1,0 +1,460 @@
+/*
+| The look of proposals, shared by the web pages and the card in the Claude
+| chat (DESIGN.md, section 8). app.css imports this file, and the card's view
+| inlines it, so a block reads the same in both places. The card has no
+| Tailwind preflight, so every rule here sets what it relies on.
+|
+| Each colour takes the host's theme variable when the card runs in a host,
+| and otherwise the fallback from the colour table, light or dark by the
+| page's colour scheme.
+*/
+
+:root {
+    color-scheme: light dark;
+
+    --gw-text: var(--color-text-primary, light-dark(#1d232b, #e5e9ee));
+    --gw-muted: var(--color-text-secondary, light-dark(#5d6874, #9aa5b1));
+    --gw-line: var(--color-border-primary, light-dark(#dde1e6, #2e3640));
+    --gw-background: var(--color-background-primary, light-dark(#ffffff, #1c2229));
+    --gw-accent: var(--color-text-info, light-dark(#0b5cad, #6aa8ff));
+    --gw-ok: var(--color-text-success, light-dark(#1d7a45, #5cc98a));
+    --gw-warn: var(--color-text-warning, light-dark(#9a5b00, #f0b552));
+    --gw-bad: var(--color-text-danger, light-dark(#b3261e, #ff8a80));
+}
+
+.gw {
+    margin: 0;
+    background: var(--gw-background);
+    color: var(--gw-text);
+    font-family: var(--font-sans, system-ui, sans-serif);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+}
+
+.gw *,
+.gw *::before,
+.gw *::after {
+    box-sizing: border-box;
+}
+
+.gw :where(h1, h2, h3, h4, p, ul, ol, blockquote, pre, dl, dd) {
+    margin: 0;
+}
+
+/* The heading that counts what waits, and the empty state */
+
+.gw-heading {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.35;
+}
+
+.gw-empty,
+.gw-state {
+    color: var(--gw-muted);
+}
+
+.gw-state[data-tone='bad'] {
+    color: var(--gw-bad);
+}
+
+/* A group: the proposals that cite one mail */
+
+.gw-group {
+    display: grid;
+    gap: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--gw-line);
+}
+
+.gw-mail {
+    display: grid;
+    gap: 2px;
+}
+
+.gw-mail-head {
+    font-size: 13px;
+    color: var(--gw-muted);
+    overflow-wrap: anywhere;
+}
+
+.gw-mail-head .gw-sender {
+    color: var(--gw-text);
+    font-weight: 600;
+}
+
+.gw-mail-body {
+    display: grid;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 10px 12px;
+    border: 1px solid var(--gw-line);
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.gw-mail-body pre {
+    max-height: 22em;
+    overflow: auto;
+    font: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.gw-attachments {
+    color: var(--gw-muted);
+    overflow-wrap: anywhere;
+}
+
+.gw-group-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+/* The foot of the list: what rules applied, and the link to the page */
+
+.gw-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--gw-line);
+}
+
+.gw-applied {
+    display: grid;
+    gap: 4px;
+    margin-top: 8px;
+    padding: 0;
+    list-style: none;
+}
+
+.gw-applied .gw-rule {
+    color: var(--gw-muted);
+    font-size: 13px;
+}
+
+.gw-link {
+    color: var(--gw-accent);
+    font-weight: 600;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}
+
+.gw-link:focus-visible {
+    outline: 2px solid var(--gw-accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+/* Folds: the mail, the agent's summary, the evidence, what rules applied */
+
+.gw-fold > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--gw-muted);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+
+.gw-fold > summary::-webkit-details-marker {
+    display: none;
+}
+
+.gw-fold > summary::before {
+    content: '';
+    flex: none;
+    width: 0;
+    height: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-left: 5px solid currentColor;
+    transition: transform 120ms ease;
+}
+
+.gw-fold[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+.gw-fold > summary:hover {
+    color: var(--gw-text);
+}
+
+.gw-fold > summary:focus-visible {
+    outline: 2px solid var(--gw-accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+.gw-fold-body {
+    display: grid;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+/* Buttons and the reason field */
+
+.gw-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 32px;
+    padding: 0 14px;
+    border: 1px solid var(--gw-line);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--gw-text);
+    font: inherit;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.gw-button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--gw-text) 7%, transparent);
+}
+
+.gw-button--primary {
+    border-color: var(--gw-accent);
+    background: var(--gw-accent);
+    color: var(--gw-background);
+}
+
+.gw-button--primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--gw-accent) 85%, var(--gw-text));
+}
+
+.gw-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.gw-button:focus-visible,
+.gw-input:focus-visible {
+    outline: 2px solid var(--gw-accent);
+    outline-offset: 2px;
+}
+
+.gw-input {
+    width: 100%;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--gw-line);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--gw-text);
+    font: inherit;
+}
+
+.gw-input::placeholder {
+    color: var(--gw-muted);
+    opacity: 1;
+}
+
+/* A proposal block */
+
+.pb {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    padding: 2px 0 2px 12px;
+    border-left: 3px solid var(--gw-accent);
+}
+
+.pb[data-status='applied'] {
+    border-left-color: var(--gw-ok);
+}
+
+.pb[data-status='rejected'],
+.pb[data-status='failed'],
+.pb[data-status='stale'] {
+    border-left-color: var(--gw-bad);
+}
+
+.pb[data-status='denied'] {
+    border-left-color: var(--gw-muted);
+}
+
+.pb-head {
+    display: grid;
+    gap: 2px;
+}
+
+.pb-title {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.pb-toggle {
+    display: inline;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.pb-toggle:hover {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}
+
+.pb-toggle:focus-visible {
+    outline: 2px solid var(--gw-accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+.pb-line {
+    color: var(--gw-muted);
+    overflow-wrap: anywhere;
+}
+
+.pb-because,
+.pb-summary,
+.pb-record,
+.pb-quote {
+    overflow-wrap: anywhere;
+}
+
+.pb-effect {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.pb-heading {
+    color: var(--gw-muted);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.pb-kind {
+    margin-right: 2px;
+    color: var(--gw-muted);
+}
+
+/*
+| The Now and After grid. A denied proposal has no Now, so its grid is two
+| columns. On a wide screen the label column has a common width, so the grids
+| of the blocks line up. On a narrow one each label goes on its own line above
+| its values, so the values keep their width.
+*/
+
+.pb-grid {
+    display: grid;
+    grid-template-columns: minmax(9.5em, max-content) fit-content(10em) minmax(0, 1fr);
+    gap: 3px 16px;
+    align-items: baseline;
+    min-width: 0;
+}
+
+.pb-grid--values {
+    grid-template-columns: minmax(9.5em, max-content) minmax(0, 1fr);
+}
+
+@media (max-width: 479.98px) {
+    .pb-grid {
+        grid-template-columns: fit-content(9em) minmax(0, 1fr);
+        column-gap: 12px;
+    }
+
+    .pb-grid--values {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .pb-corner {
+        display: none;
+    }
+
+    .pb-label {
+        grid-column: 1 / -1;
+        margin-top: 4px;
+    }
+}
+
+.pb-col {
+    color: var(--gw-muted);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.pb-label {
+    color: var(--gw-muted);
+    overflow-wrap: break-word;
+}
+
+.pb-now,
+.pb-after {
+    min-width: 0;
+    overflow-wrap: break-word;
+}
+
+.pb-after strong {
+    font-weight: 600;
+}
+
+.pb-note {
+    color: var(--gw-muted);
+}
+
+.pb-warning {
+    grid-column: 1 / -1;
+    margin-bottom: 2px;
+    color: var(--gw-warn);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.pb-notice {
+    padding: 8px 10px;
+    border: 1px solid var(--gw-line);
+    border-radius: 6px;
+}
+
+.pb-source {
+    color: var(--gw-muted);
+}
+
+.pb-reasons {
+    padding-left: 18px;
+    list-style: disc;
+}
+
+.pb-decide {
+    display: grid;
+    gap: 8px;
+    max-width: 30rem;
+}
+
+.pb-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pb-error {
+    color: var(--gw-bad);
+    font-weight: 600;
+}
+
+/* A very narrow card: the gap between the values goes to 8px. */
+
+@media (max-width: 359.98px) {
+    .pb-grid {
+        column-gap: 8px;
+    }
+}

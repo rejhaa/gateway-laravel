@@ -1,5 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
+use App\Mcp\Servers\GatewayServer;
 use Laravel\Mcp\Facades\Mcp;
 
-// Mcp::web('/mcp/demo', \App\Mcp\Servers\PublicServer::class);
+Mcp::oauthRoutes();
+
+Mcp::web('/mcp', GatewayServer::class)->middleware('auth:api');
