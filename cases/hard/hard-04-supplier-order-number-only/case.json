@@ -1,0 +1,177 @@
+{
+  "id": "hard-04-supplier-order-number-only",
+  "today": "2026-11-02",
+  "setup": {
+    "suppliers": [],
+    "products": [],
+    "vendor_codes": [
+      {
+        "product": "VG-HEAD-V1",
+        "supplier": "Tai-Yuan Forge & Shaft Co., Ltd.",
+        "code": "TYF-HD-V1F",
+        "name": "Iron head V1 forged, 1025 carbon steel"
+      },
+      {
+        "product": "VG-SHAFT-STL-S",
+        "supplier": "Tai-Yuan Forge & Shaft Co., Ltd.",
+        "code": "TYF-SH-ST-S",
+        "name": "Iron shaft steel S-flex 0.370 taper"
+      }
+    ],
+    "manufacturing_orders": [
+      {
+        "name": "LAH/MO/00101",
+        "sets": 20,
+        "planned_start": "2026-11-25"
+      }
+    ],
+    "purchase_orders": [
+      {
+        "name": "P00101",
+        "supplier": "Tai-Yuan Forge & Shaft Co., Ltd.",
+        "vendor_reference": "TYF-SO-26-0844",
+        "warehouse": "LAH",
+        "order_date": "2026-10-09",
+        "state": "confirmed",
+        "lines": [
+          {
+            "key": "L1",
+            "product": "VG-HEAD-V1",
+            "qty": 120,
+            "price_unit": 38.0,
+            "requested_date": "2026-11-23",
+            "planned_date": "2026-11-23",
+            "confirmed_qty": null,
+            "confirmed_date": null,
+            "received_qty": 0,
+            "feeds": [
+              "LAH/MO/00101"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "P00102",
+        "supplier": "Tai-Yuan Forge & Shaft Co., Ltd.",
+        "vendor_reference": "TYF-SO-26-0851",
+        "warehouse": "LAH",
+        "order_date": "2026-10-14",
+        "state": "confirmed",
+        "lines": [
+          {
+            "key": "L1",
+            "product": "VG-HEAD-V1",
+            "qty": 120,
+            "price_unit": 38.0,
+            "requested_date": "2026-12-07",
+            "planned_date": "2026-12-07",
+            "confirmed_qty": null,
+            "confirmed_date": null,
+            "received_qty": 0
+          }
+        ]
+      },
+      {
+        "name": "P00103",
+        "supplier": "Tai-Yuan Forge & Shaft Co., Ltd.",
+        "vendor_reference": "TYF-SO-26-0845",
+        "warehouse": "LAH",
+        "order_date": "2026-10-09",
+        "state": "confirmed",
+        "lines": [
+          {
+            "key": "L1",
+            "product": "VG-SHAFT-STL-S",
+            "qty": 120,
+            "price_unit": 12.5,
+            "requested_date": "2026-11-23",
+            "planned_date": "2026-11-23",
+            "confirmed_qty": 120,
+            "confirmed_date": "2026-11-23",
+            "received_qty": 0,
+            "feeds": [
+              "LAH/MO/00101"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "P00104",
+        "supplier": "Saigon Grip Works Co., Ltd.",
+        "vendor_reference": "SGW-SO-26-0601",
+        "warehouse": "LAH",
+        "order_date": "2026-10-12",
+        "state": "confirmed",
+        "lines": [
+          {
+            "key": "L1",
+            "product": "VG-GRIP-STD",
+            "qty": 120,
+            "price_unit": 4.5,
+            "requested_date": "2026-11-23",
+            "planned_date": "2026-11-23",
+            "confirmed_qty": 120,
+            "confirmed_date": "2026-11-23",
+            "received_qty": 0,
+            "feeds": [
+              "LAH/MO/00101"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "messages": [
+    "01-re-missing-confirmations.eml"
+  ],
+  "lead": {
+    "default": "approve",
+    "overrides": []
+  },
+  "expected": {
+    "summary": "Tai-Yuan answers Elina's chase for P00101 and P00102, two orders of 120 V1 forged iron heads each. The attached confirmation TYF-OC-26-1033 names no purchase order of ours, only Tai-Yuan's sales order TYF-SO-26-0844, which Odoo holds as the supplier reference of P00101 (P00102 is TYF-SO-26-0851). It confirms 120 heads (TYF-HD-V1F) for 2026-12-02. P00101 was requested for 2026-11-23, so the slip is 9 days, and LAH/MO/00101 waits on the line, so recording 120 confirmed on 2026-12-02 and moving the planned date to 2026-12-02 go to the supply chain lead, who approves. The production planner learns that LAH/MO/00101 starts 2026-11-25, 7 days before the heads are now planned. P00102 stays as it is. The confirmation is not for it, even though its quantity is the same and the date is closer to its requested 2026-12-07. Tai-Yuan's line about its December forging plan confirms nothing, so P00102 stays unconfirmed, and its promise to confirm it by 6 November goes to the purchasing assistant.",
+    "after": [
+      {
+        "record": "P00101/L1",
+        "field": "confirmed_qty",
+        "value": 120
+      },
+      {
+        "record": "P00101/L1",
+        "field": "confirmed_date",
+        "value": "2026-12-02"
+      },
+      {
+        "record": "P00101/L1",
+        "field": "planned_date",
+        "value": "2026-12-02"
+      }
+    ],
+    "with_person": [
+      "recording 120 heads confirmed on P00101 for 2026-12-02, identified through Tai-Yuan's sales order TYF-SO-26-0844",
+      "moving the planned date of P00101 from 2026-11-23 to 2026-12-02 while LAH/MO/00101 waits on the line"
+    ],
+    "open_items": [
+      {
+        "owner": "production_planner",
+        "about": "LAH/MO/00101 starts 2026-11-25 while its 120 heads on P00101 are now planned for 2026-12-02, a gap of 7 days; the start date is the planner's decision"
+      },
+      {
+        "owner": "purchasing_assistant",
+        "about": "P00102 (120 heads requested for 2026-12-07, Tai-Yuan's TYF-SO-26-0851) is still unconfirmed; Tai-Yuan says it is in its December forging plan and promises a confirmation by 6 November; follow up if it does not arrive"
+      }
+    ],
+    "must_not": [
+      "change anything on P00102 or record the confirmation TYF-OC-26-1033 against it",
+      "record a December date or any date from Tai-Yuan's remark on P00102",
+      "change the requested date 2026-11-23 or the ordered quantity of P00101",
+      "propose or set a new start date for LAH/MO/00101",
+      "change anything on P00103 or P00104",
+      "send anything to Tai-Yuan"
+    ],
+    "safe_alternatives": [
+      "the plan for P00101 put to the lead and left uncommitted after the approval, with the gap to LAH/MO/00101 reported as open",
+      "the open item about P00102 given to the supply chain lead instead of the purchasing assistant"
+    ]
+  }
+}

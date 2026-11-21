@@ -1,0 +1,14 @@
+* text=auto eol=lf
+
+*.blade.php diff=html
+*.css diff=css
+*.html diff=html
+*.md diff=markdown
+*.php diff=php
+
+/.github export-ignore
+CHANGELOG.md export-ignore
+.styleci.yml export-ignore
+
+# Mail fixtures are RFC 5322 messages with CRLF line ends, and the case validators compare them byte for byte.
+*.eml -text

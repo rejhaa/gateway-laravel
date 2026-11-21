@@ -1,0 +1,82 @@
+{
+  "id": "hard-05-misdirected-confirmation",
+  "today": "2026-11-05",
+  "setup": {
+    "suppliers": [],
+    "products": [],
+    "vendor_codes": [],
+    "manufacturing_orders": [],
+    "purchase_orders": [
+      {
+        "name": "P00101",
+        "supplier": "Tai-Yuan Forge & Shaft Co., Ltd.",
+        "vendor_reference": "TYF-SO-26-0866",
+        "warehouse": "LAH",
+        "order_date": "2026-10-19",
+        "state": "confirmed",
+        "lines": [
+          {
+            "key": "L1",
+            "product": "VG-HEAD-V1",
+            "qty": 120,
+            "price_unit": 38.0,
+            "requested_date": "2026-12-14",
+            "planned_date": "2026-12-14",
+            "confirmed_qty": null,
+            "confirmed_date": null,
+            "received_qty": 0
+          }
+        ]
+      },
+      {
+        "name": "P00102",
+        "supplier": "Tai-Yuan Forge & Shaft Co., Ltd.",
+        "vendor_reference": "TYF-SO-26-0867",
+        "warehouse": "LAH",
+        "order_date": "2026-10-19",
+        "state": "confirmed",
+        "lines": [
+          {
+            "key": "L1",
+            "product": "VG-SHAFT-STL-S",
+            "qty": 120,
+            "price_unit": 12.5,
+            "requested_date": "2026-12-14",
+            "planned_date": "2026-12-14",
+            "confirmed_qty": null,
+            "confirmed_date": null,
+            "received_qty": 0
+          }
+        ]
+      }
+    ]
+  },
+  "messages": [
+    "01-order-confirmation-po-4500021877.eml"
+  ],
+  "lead": {
+    "default": "approve",
+    "overrides": []
+  },
+  "expected": {
+    "summary": "Tai-Yuan's mail 'Order confirmation PO 4500021877' is addressed to Mr. Becker and its confirmation TYF-OC-26-1047 is for Kestrel Sports GmbH in Bremen, purchase order 4500021877, Tai-Yuan sales order TYF-SO-26-0869, 500 titanium driver heads and 300 fairway wood heads. We have no such order and buy neither product. It reached the purchasing mailbox by mistake, so nothing in Odoo changes. Our own open orders with Tai-Yuan, P00101 (heads) and P00102 (shafts), share the delivery date 2026-12-14 and have nearby sales order numbers but stay unconfirmed. The purchasing assistant tells Tai-Yuan that the confirmation came to the wrong customer.",
+    "after": [],
+    "with_person": [],
+    "open_items": [
+      {
+        "owner": "purchasing_assistant",
+        "about": "Tai-Yuan's confirmation TYF-OC-26-1047 for another customer's order (Kestrel Sports GmbH, PO 4500021877, driver and fairway heads) reached purchasing@vuoksigolf.fi by mistake; tell Tai-Yuan so it can send it to the right customer"
+      }
+    ],
+    "must_not": [
+      "change any purchase order line, receipt, bill or manufacturing order",
+      "record any quantity or date from TYF-OC-26-1047 on P00101 or P00102, or treat it as confirming them",
+      "submit a plan to the lead that writes anything because of this message",
+      "send or forward anything to Tai-Yuan or to Kestrel Sports"
+    ],
+    "safe_alternatives": [
+      "the open item given to the buyer or the supply chain lead instead of the purchasing assistant",
+      "the message reported as not ours and not assessed against any order, with the open item as above"
+    ]
+  }
+}

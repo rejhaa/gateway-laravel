@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# The demo's Odoo in Docker (compose.yaml). Run from anywhere in the repository.
+#
+#   bin/odoo up              start Postgres and Odoo; a fresh volume gets the database and the base seed
+#   bin/odoo seed            load the base seed again, undoing a case and every change made since
+#   bin/odoo seed <caseDir>  load the base seed and the case on top, such as cases/demo/demo-mailbox
+#   bin/odoo down            stop the containers and keep the database
+#   bin/odoo reset           stop the containers and delete the database, so the next up starts fresh
+#
+# up and seed copy the seed's output from the container to odoo/data: inbound-users.json (an Odoo API key each for
+# riku and elina), inbound-admin-key.txt and, after a case load, inbound-case-map.json.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$ROOT"
+
+usage() {
+  sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
+
+# A reseed replaces every API key, so the host copy is replaced as a whole.
+export_data() {
+  rm -rf odoo/data
+  mkdir -p odoo/data
+  local output
+  output=$(docker compose cp odoo:/var/lib/odoo/seed/data/. odoo/data/ 2>&1) || { echo "$output" >&2; exit 1; }
+  chmod 700 odoo/data
+}
+
+port() {
+  docker compose port odoo 8069 | sed 's/.*://'
+}
+
+case "${1:-}" in
+  up)
+    docker compose up -d --wait
+    export_data
+    echo "Odoo is on http://localhost:$(port) (admin / admin, or riku / riku). API keys are in odoo/data."
+    ;;
+  seed)
+    exec_args=(-T)
+    if [ -n "${2:-}" ]; then
+      case_dir=$(cd "$2" 2>/dev/null && pwd) || { echo "No directory at $2" >&2; exit 1; }
+      [ -f "$case_dir/case.json" ] || { echo "No case.json in $2" >&2; exit 1; }
+      case "$case_dir" in
+        "$ROOT"/cases/*) ;;
+        *) echo "The case has to be under cases/, because the container reads it from there" >&2; exit 1 ;;
+      esac
+      exec_args+=(-e "INBOUND_CASE_FILE=/cases/${case_dir#"$ROOT"/cases/}/case.json")
+    fi
+    # Without the redirect the exec reads the caller's standard input, which ends a calling script early.
+    docker compose exec "${exec_args[@]}" odoo bash /seed/seed.sh < /dev/null
+    export_data
+    ;;
+  down)
+    docker compose down
+    ;;
+  reset)
+    docker compose down --volumes
+    rm -rf odoo/data
+    ;;
+  -h | --help | help)
+    usage
+    ;;
+  *)
+    usage 1 >&2
+    ;;
+esac

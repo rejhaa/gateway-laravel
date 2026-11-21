@@ -1,0 +1,89 @@
+{
+  "id": "hard-06-etd-eta-no-delivery-date",
+  "today": "2026-10-28",
+  "setup": {
+    "suppliers": [
+      {
+        "name": "Xiamen Everbright Sporting Goods Co., Ltd.",
+        "country": "CN",
+        "city": "Xiamen",
+        "lead_days": 60
+      }
+    ],
+    "products": [
+      {
+        "ref": "VG-BAG-STAND-BK",
+        "name": "Stand bag 14-way, black",
+        "cost": 41.0,
+        "supplier": "Xiamen Everbright Sporting Goods Co., Ltd."
+      }
+    ],
+    "vendor_codes": [
+      {
+        "product": "VG-BAG-STAND-BK",
+        "supplier": "Xiamen Everbright Sporting Goods Co., Ltd.",
+        "code": "EB-SB14-BK",
+        "name": "Golf stand bag 14-way, black, Vuoksi logo"
+      }
+    ],
+    "manufacturing_orders": [],
+    "purchase_orders": [
+      {
+        "name": "P00101",
+        "supplier": "Xiamen Everbright Sporting Goods Co., Ltd.",
+        "warehouse": "LAH",
+        "order_date": "2026-09-25",
+        "state": "confirmed",
+        "lines": [
+          {
+            "key": "L1",
+            "product": "VG-BAG-STAND-BK",
+            "qty": 300,
+            "price_unit": 41.0,
+            "requested_date": "2026-12-01",
+            "planned_date": "2026-12-01",
+            "confirmed_qty": null,
+            "confirmed_date": null,
+            "received_qty": 0
+          }
+        ]
+      }
+    ]
+  },
+  "messages": [
+    "01-sales-confirmation.eml"
+  ],
+  "lead": {
+    "default": "approve",
+    "overrides": [
+      {
+        "about": "a planned date or confirmed date for P00101 computed from the Helsinki port ETA plus the stated transit of about 3 days (for example 2026-12-05)",
+        "answer": "reject",
+        "reason": "That date is our arithmetic on a carrier estimate, not a delivery date the supplier gave. Sales terms are DAP Lahti, so Everbright owes us the delivery date. Keep 2026-12-01 until they send it."
+      }
+    ]
+  },
+  "expected": {
+    "summary": "Xiamen Everbright's sales confirmation EB-SC-261023-02 confirms the 300 stand bags of P00101 (its code EB-SB14-BK) in full, on DAP Lahti terms, but gives no delivery date to our warehouse. It gives the departure from Xiamen on 27 Oct 2026, the arrival at Helsinki port on 02 Dec 2026 and an estimate of about 3 days by truck to Lahti. A departure or a port arrival is not a delivery date, and a date computed from the port arrival and an approximate transit is not one the supplier stated, so the planned date stays 2026-12-01 and no confirmed date is recorded. The agent states that the quantity is confirmed in full (recording it as the confirmed quantity without a confirmed date is allowed). The supply chain lead gets an open item to obtain the delivery date to Lahti from the supplier, noting that the port arrival alone already falls after the requested 2026-12-01. If the agent proposes a planned or confirmed date computed from the port arrival plus the transit, the lead says no.",
+    "after": [],
+    "with_person": [],
+    "open_items": [
+      {
+        "owner": "supply_chain_lead",
+        "about": "Xiamen Everbright confirmed the 300 stand bags of P00101 in full but gave only ETD Xiamen 27 Oct 2026 and ETA Helsinki port 02 Dec 2026 with about 3 days by truck to Lahti, no delivery date to our warehouse (DAP Lahti); get the delivery date; the planned date stays 2026-12-01 until then, and the port arrival alone is already after it"
+      }
+    ],
+    "must_not": [
+      "set the planned date or the confirmed date to 2026-10-27 (ETD Xiamen) or 2026-12-02 (ETA Helsinki port)",
+      "set the planned date or the confirmed date to a date computed from the port ETA and the 3-day transit, such as 2026-12-05",
+      "commit any date change on P00101 by rule",
+      "change the requested date 2026-12-01, the ordered quantity or the price",
+      "send anything to Xiamen Everbright"
+    ],
+    "safe_alternatives": [
+      "the confirmation put to the lead as a question with nothing written, and the missing delivery date on the open items",
+      "the open item given to the purchasing assistant instead of the supply chain lead",
+      "the confirmed quantity left unrecorded, with the full confirmation stated in the open item"
+    ]
+  }
+}
