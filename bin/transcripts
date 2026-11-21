@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""Write one Markdown transcript per Claude Code session of this project into transcripts/.
+
+A transcript has the prompts the user typed and the text Claude answered with. The work between them (tool calls,
+their output, Claude's thinking, injected context) is left out, and each run of tool calls is one line that counts them.
+
+Claude Code keeps a session as a JSONL file under ~/.claude/projects/<the project's path with / as ->/. Run this
+again at any time: it rewrites every transcript from those files, so a session that has continued gets its new turns.
+
+    bin/transcripts
+
+OMIT_SESSIONS and OMIT_TURNS below name what is left out on purpose.
+"""
+import json
+import re
+import sys
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SESSIONS = Path.home() / '.claude' / 'projects' / str(ROOT).replace('/', '-')
+OUT = ROOT / 'transcripts'
+
+# Sessions with no transcript, by session id. A line that names one of them by the first 8 characters of its id is
+# dropped from the other transcripts too.
+OMIT_SESSIONS = {'9dc11368-7a9c-49d4-afe7-4cddd64ac96d'}
+# Turns left out of a session's transcript: session id -> the numbers of the prompts as the session log counts them.
+# A turn is the prompt and everything Claude answered until the next prompt.
+OMIT_TURNS = {'8b196360-80ad-42e1-a1e1-fe5182c559e8': {4}}
+
+TAG = re.compile(r'<(system-reminder|local-command-caveat)>.*?</\1>', re.S)
+COMMAND = re.compile(r'<command-name>(.*?)</command-name>.*?<command-args>(.*?)</command-args>', re.S)
+STDOUT = re.compile(r'<local-command-stdout>(.*?)</local-command-stdout>', re.S)
+
+
+def local(timestamp):
+    return datetime.fromisoformat(timestamp.replace('Z', '+00:00')).astimezone()
+
+
+def demote(text):
+    """Headings in a response move two levels down, so they sit under the transcript's own headings."""
+    lines, fenced = [], False
+    for line in text.split('\n'):
+        if line.lstrip().startswith('```'):
+            fenced = not fenced
+        if not fenced and re.match(r'#{1,4} ', line):
+            line = '##' + line
+        lines.append(line)
+    return '\n'.join(lines)
+
+
+def quote(text):
+    return '\n'.join(('> ' + line).rstrip() for line in text.split('\n'))
+
+
+def tool_line(counts):
+    total = sum(counts.values())
+    names = ', '.join(f'{name} {n}' for name, n in counts.most_common())
+    return f'*Claude worked: {total} tool {"call" if total == 1 else "calls"} ({names}).*'
+
+
+def without_omitted(text):
+    ids = [session[:8] for session in OMIT_SESSIONS]
+    return '\n'.join(line for line in text.split('\n') if not any(i in line for i in ids))
+
+
+def kept_turns(path, items):
+    """The items without the turns OMIT_TURNS names for this session."""
+    omit, number, kept = OMIT_TURNS.get(path.stem, set()), 0, []
+    for item in items:
+        if item[0] == 'prompt':
+            number += 1
+        if number not in omit:
+            kept.append(item)
+    return kept
+
+
+def read(path):
+    """The session as a title, some facts and a list of items: ('prompt' | 'command' | 'text' | 'answer', time, text)
+    and ('tools', Counter)."""
+    title, models, version, items = None, [], None, []
+    questions = {}
+    for raw in path.read_text(encoding='utf-8').splitlines():
+        entry = json.loads(raw)
+        kind = entry.get('type')
+        if kind == 'ai-title':
+            title = entry.get('aiTitle') or title
+        if kind not in ('user', 'assistant') or entry.get('isSidechain') or entry.get('isMeta'):
+            continue
+        version = entry.get('version') or version
+        message = entry.get('message') or {}
+        content = message.get('content')
+        blocks = [{'type': 'text', 'text': content}] if isinstance(content, str) else content or []
+        when = entry.get('timestamp')
+
+        if kind == 'assistant':
+            model = message.get('model')
+            if model and model not in models and not model.startswith('<'):
+                models.append(model)
+            for block in blocks:
+                if block.get('type') == 'text' and block['text'].strip():
+                    items.append(('text', when, without_omitted(block['text'].strip())))
+                elif block.get('type') == 'tool_use':
+                    if block['name'] == 'AskUserQuestion':
+                        questions[block['id']] = [q.get('question', '') for q in block['input'].get('questions', [])]
+                    if items and items[-1][0] == 'tools':
+                        items[-1][1][block['name']] += 1
+                    else:
+                        items.append(('tools', Counter({block['name']: 1})))
+            continue
+
+        for block in blocks:
+            if block.get('type') == 'tool_result' and block.get('tool_use_id') in questions:
+                result = block.get('content')
+                if isinstance(result, list):
+                    result = '\n'.join(part.get('text', '') for part in result if part.get('type') == 'text')
+                asked = '\n'.join(f'- {q}' for q in questions[block['tool_use_id']])
+                items.append(('answer', when, f'Claude asked:\n\n{asked}\n\nAnswer:\n\n{quote(str(result).strip())}'))
+            if block.get('type') != 'text':
+                continue
+            text = block['text']
+            command = COMMAND.search(text)
+            output = STDOUT.search(text)
+            if command:
+                items.append(('command', when, ' '.join(part.strip() for part in command.groups() if part.strip())))
+            elif output:
+                if items and items[-1][0] == 'command' and output.group(1).strip():
+                    items[-1] = ('command', items[-1][1], items[-1][2], output.group(1).strip())
+            elif TAG.sub('', text).strip():
+                items.append(('prompt', when, TAG.sub('', text).strip()))
+    return title, models, version, kept_turns(path, items)
+
+
+def render(path):
+    title, models, version, items = read(path)
+    prompts = [item for item in items if item[0] == 'prompt']
+    if not prompts:
+        return None
+    start = local(next(item[1] for item in items if item[0] != 'tools'))
+    end = local([item[1] for item in items if item[0] != 'tools'][-1])
+    tools = sum((item[1] for item in items if item[0] == 'tools'), Counter())
+    out = [
+        f'# {title or "Untitled session"}',
+        '',
+        f'- Started {start:%Y-%m-%d %H:%M}, last turn {end:%Y-%m-%d %H:%M} ({start:%Z})',
+        f'- Model: {", ".join(models) or "unknown"}, in Claude Code {version or "unknown"}',
+        f'- {len(prompts)} {"prompt" if len(prompts) == 1 else "prompts"}, {sum(tools.values())} tool calls by Claude',
+        f'- Session `{path.stem}`',
+    ]
+    number, answering = 0, False
+    for item in items:
+        kind = item[0]
+        if kind == 'prompt':
+            number += 1
+            out += ['', f'## Prompt {number} ({local(item[1]):%H:%M})', '', quote(item[2])]
+            answering = False
+        elif kind == 'command':
+            out += ['', f'## Command ({local(item[1]):%H:%M})', '', f'`{item[2]}`']
+            if len(item) > 3:
+                out += ['', quote(item[3])]
+            answering = False
+        else:
+            if not answering:
+                out += ['', '### Claude']
+                answering = True
+            out += ['', tool_line(item[1]) if kind == 'tools' else item[2] if kind == 'answer' else demote(item[2])]
+    return f'{start:%Y-%m-%d-%H%M}-{path.stem[:8]}.md', '\n'.join(out) + '\n'
+
+
+def main():
+    if not SESSIONS.is_dir():
+        sys.exit(f'No Claude Code sessions at {SESSIONS}')
+    OUT.mkdir(exist_ok=True)
+    written = {}
+    for path in sorted(SESSIONS.glob('*.jsonl')):
+        rendered = None if path.stem in OMIT_SESSIONS else render(path)
+        if rendered:
+            written[rendered[0]] = rendered[1]
+    # A session keeps its file name, because the name comes from its start time and id.
+    for stale in OUT.glob('[0-9]*-[0-9a-f]*.md'):
+        if stale.name not in written:
+            stale.unlink()
+    for name, text in sorted(written.items()):
+        (OUT / name).write_text(text, encoding='utf-8')
+        print(f'transcripts/{name}')
+    index = ['# Claude Code session transcripts', '',
+             'The prompts typed in this project and the answers Claude gave, one file per session, oldest first. '
+             'The tool calls between a prompt and its answer are counted and their content is left out. '
+             '`bin/transcripts` writes these files from the session logs Claude Code keeps on this machine, '
+             'so run it again after a session to add it or to bring a continued one up to date.', '']
+    for name, text in sorted(written.items()):
+        facts = text.split('\n')
+        index.append(f'- [{facts[0][2:]}]({name}): {facts[4][2:]}, s{facts[2][3:]}')
+    (OUT / 'README.md').write_text('\n'.join(index) + '\n', encoding='utf-8')
+
+
+if __name__ == '__main__':
+    main()

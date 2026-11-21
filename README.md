@@ -72,6 +72,7 @@ composer test
 | `cases/` | The test cases and their format, `CASE-FORMAT.md`. `demo/` is the mailbox of the demo walkthrough, `spike/` has nine cases and `hard/` seven. Each set has its generator in `_tools/`. |
 | `skills/inbound-exceptions/` | The skill the agent works by. It names the gateway's MCP tools, which this application does not have yet. |
 | `rules/` | The purchasing policy, the rules that decide who approves a change, and what the agent may read and propose in Odoo |
+| `transcripts/`, `bin/transcripts` | The prompts and Claude's answers from the Claude Code sessions that built this project, one file per session, and the script that writes them from the local session logs |
 | `app/`, `routes/`, `resources/` and the rest | The Laravel application |
 
 ## Where it comes from
