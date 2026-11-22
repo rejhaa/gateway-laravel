@@ -11,7 +11,6 @@ A Laravel 13 application that sits between an agent (Claude) and the purchase or
 
 ## Rules
 
-- Never read `cases/` or the old project at `/home/rasmus/dev/agent-gateway` while designing or coding. Tests write their fixtures fresh. The demo case is used once, for the manual end-to-end run in section 13 of `DESIGN.md`.
 - `declare(strict_types=1)` in every PHP file, with typed properties and return types.
 - Every test names the bug it catches (section 12 of `DESIGN.md`).
 

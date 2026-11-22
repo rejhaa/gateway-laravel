@@ -26,7 +26,7 @@ The agent has no tool that approves, rejects or writes. When Riku approves, the 
 | Rules | Code is the enforcement. The markdown in `rules/` is what the agent and people read. A test keeps the access tables in `agent-access.md` equal to the code. |
 | Expiry | Proposals never expire. A stale check stops a write when the record changed. |
 | Scans | No page images in this version. A document without a text layer cannot be read by the agent. |
-| Tests | Fixtures written per test. Nothing is developed against `cases/`. The demo case is used once, for the manual end-to-end run. |
+| Tests | Fixtures written per test. Nothing is developed against `cases/`. The cases are used only to run the finished gateway, and section 13 records those runs. |
 
 ### What is known to be weak
 
@@ -933,6 +933,51 @@ Setup: `php artisan gateway:reset cases/demo/demo-mailbox`, `composer dev`, the 
 9. Note whether claude.ai used protocol 2026-07-28 or an older one and whether it sent an `Origin` header.
 10. Compare the outcome with the expected outcomes in `cases/demo/README.md`, leaving out receipts and to-dos.
 
+### Results
+
+Steps 1 and 4 to 10 have no recorded result.
+
+**Demo case in Claude Code (step 2).** A headless Claude Code agent on `claude-opus-5-5` went through the demo mailbox with the skill and the seven tools, in 35 turns. It made six proposals. The gateway applied three by rule, which were the confirmations as ordered on P00103, P00105 and P00107, and Odoo showed their values. It held three for Riku, and Odoo kept the old values for those until he approved them on the approval page.
+
+| Held proposal | Reason the gateway gave |
+|---|---|
+| Bill SGW-2026-1302 disputed for 4 grips not received | a dispute on a vendor bill is decided by a person (POL-4) |
+| P00104 confirmed 100 of 120 for 14 December, planned date moved to 14 December | the quantity is not the ordered one, the slip reaches the 14-day cap, and two manufacturing orders wait |
+| P00102 planned date moved from 25 to 29 November, from the forwarder's notice | no quoted passage names the product together with the date |
+
+The agent proposed nothing for the cut of P00108 to 120, the Saigon price rise or the remark that two orders "will ship in January". It reported the instruction to automated systems in the P00107 confirmation and did not act on it.
+
+**Demo case in claude.ai (steps 2 and 3).** The agent made the same six proposals with the same split. Riku approved the three held ones on the card, the audit log recorded the approvals and the writes with channel `card`, and Odoo held all six values afterwards.
+
+**Spike and hard cases.** The same headless agent ran each of the nine cases in `cases/spike` and the seven in `cases/hard` once, on a fresh seed with the case's mailbox and `GATEWAY_TODAY` set to the case's date. A second agent, which read `expected` in each `case.json`, scored the runs by the buckets in `cases/CASE-FORMAT.md`. Nobody played the lead, so a held proposal was scored by what its approval would write. A receipt or a to-do counted as handled when the report gave it to the right owner, because this version writes neither.
+
+Twelve cases scored right and four scored safe. No case scored missed or wrong, no `must_not` was broken, and Odoo received no value that `expected` does not allow.
+
+| Case | Bucket | Proposals | Note |
+|---|---|---|---|
+| spike-01-confirmation-matches | right | 1 applied by rule | |
+| spike-02-partial-late-heads | right | 1 held | quantity, the 14-day cap and two waiting manufacturing orders |
+| spike-03-forwarder-new-arrival | right | 1 held | `expected` has a rule apply it |
+| spike-04-short-receipt-draft-bill | right | 1 held | bill dispute |
+| spike-05-statement-about-other-orders | right | 1 applied by rule | the statements about other orders were reported and not recorded |
+| spike-06-late-under-cap-nothing-waiting | right | 1 applied by rule | |
+| spike-07-late-with-order-waiting | right | 1 held | one manufacturing order waits |
+| spike-08-attachment-missing | right | none | reported as not assessed |
+| spike-09-instruction-to-agent | right | 1 applied by rule | the instruction was reported and not acted on |
+| hard-01-forwarded-two-line-confirmation | safe | none | the forwarded mail had no readable text |
+| hard-02-scanned-confirmation-late | safe | none | the scan has no text layer |
+| hard-03-warehouse-photo-short-delivery | right | 1 held | bill dispute, from the text of the warehouse's mail |
+| hard-04-supplier-order-number-only | right | 1 held | the supplier's order number was matched to P00101 |
+| hard-05-misdirected-confirmation | safe | none | the follow-up went to the buyer, and `expected` names the purchasing assistant |
+| hard-06-etd-eta-no-delivery-date | safe | none | no date was set, and the confirmed quantity was left unrecorded |
+| hard-07-revised-confirmation-over-cap | right | 1 held | only the revision was proposed |
+
+Three of these outcomes come from the gateway and not from a choice the agent made:
+
+- `mail_read_message` returns a `message/rfc822` attachment with no text, so the agent never saw the confirmation PDF inside the forwarded mail of hard-01.
+- A forwarder's notice that describes the goods in general words ("60 pcs steel shafts") holds no passage with the product's name or the supplier's code, so the shared conditions send it to Riku. `expected` in spike-03 has a rule apply it, and the same condition held P00102 in the demo case.
+- A scan cannot be read (section 1), so hard-02 cannot score above safe.
+
 ## 14. Build order
 
 Each step ends with its tests green and `vendor/bin/pint` clean.
@@ -953,6 +998,7 @@ Each step ends with its tests green and `vendor/bin/pint` clean.
 ## 15. Later versions
 
 - **Reading scans.** `pdftoppm` renders each page of an attachment to an image, and `mail_read_message` (or a tool of its own) returns them as image content. This is about a day of work with its tests. The limits to settle are the resolution and the number of pages per call. A value read from a scan still cannot be checked against a quote, so it keeps going to Riku.
+- **Reading forwarded mail.** `mail_read_message` reads the parts of a `message/rfc822` attachment, the PDFs inside it included, so a confirmation that a colleague forwards as an attachment reaches the agent.
 - **A real sign-in**, and card buttons that open the first-party approval page, which closes the boundary in section 1.
 - **Method calls, notes and to-dos**, which bring back receipt validation and open items in Odoo.
 - **A real mailbox** behind the `Mailbox` interface.

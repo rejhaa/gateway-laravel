@@ -8,8 +8,6 @@ Claude Code keeps a session as a JSONL file under ~/.claude/projects/<the projec
 again at any time: it rewrites every transcript from those files, so a session that has continued gets its new turns.
 
     bin/transcripts
-
-OMIT_SESSIONS and OMIT_TURNS below name what is left out on purpose.
 """
 import json
 import re
@@ -22,12 +20,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SESSIONS = Path.home() / '.claude' / 'projects' / str(ROOT).replace('/', '-')
 OUT = ROOT / 'transcripts'
 
-# Sessions with no transcript, by session id. A line that names one of them by the first 8 characters of its id is
-# dropped from the other transcripts too.
-OMIT_SESSIONS = {'9dc11368-7a9c-49d4-afe7-4cddd64ac96d'}
-# Turns left out of a session's transcript: session id -> the numbers of the prompts as the session log counts them.
-# A turn is the prompt and everything Claude answered until the next prompt.
-OMIT_TURNS = {'8b196360-80ad-42e1-a1e1-fe5182c559e8': {4}}
+# Remarks the index adds after a session's line, by session id.
+REMARKS = {
+    '9dc11368-7a9c-49d4-afe7-4cddd64ac96d': 'This session misunderstood the task. It is irrelevant and should not be '
+                                            'read. Everything it produced was removed from the repository.',
+}
 
 # Injected context, and the notice Claude Code sends when a background agent finishes. Neither is typed by the user.
 TAG = re.compile(r'<(system-reminder|local-command-caveat|task-notification)>.*?</\1>', re.S)
@@ -61,22 +58,6 @@ def tool_line(counts):
     return f'*Claude worked: {total} tool {"call" if total == 1 else "calls"} ({names}).*'
 
 
-def without_omitted(text):
-    ids = [session[:8] for session in OMIT_SESSIONS]
-    return '\n'.join(line for line in text.split('\n') if not any(i in line for i in ids))
-
-
-def kept_turns(path, items):
-    """The items without the turns OMIT_TURNS names for this session."""
-    omit, number, kept = OMIT_TURNS.get(path.stem, set()), 0, []
-    for item in items:
-        if item[0] == 'prompt':
-            number += 1
-        if number not in omit:
-            kept.append(item)
-    return kept
-
-
 def read(path):
     """The session as a title, some facts and a list of items: ('prompt' | 'command' | 'text' | 'answer', time, text)
     and ('tools', Counter)."""
@@ -101,7 +82,7 @@ def read(path):
                 models.append(model)
             for block in blocks:
                 if block.get('type') == 'text' and block['text'].strip():
-                    items.append(('text', when, without_omitted(block['text'].strip())))
+                    items.append(('text', when, block['text'].strip()))
                 elif block.get('type') == 'tool_use':
                     if block['name'] == 'AskUserQuestion':
                         questions[block['id']] = [q.get('question', '') for q in block['input'].get('questions', [])]
@@ -130,7 +111,7 @@ def read(path):
                     items[-1] = ('command', items[-1][1], items[-1][2], output.group(1).strip())
             elif TAG.sub('', text).strip():
                 items.append(('prompt', when, TAG.sub('', text).strip()))
-    return title, models, version, kept_turns(path, items)
+    return title, models, version, items
 
 
 def render(path):
@@ -175,7 +156,7 @@ def main():
     OUT.mkdir(exist_ok=True)
     written = {}
     for path in sorted(SESSIONS.glob('*.jsonl')):
-        rendered = None if path.stem in OMIT_SESSIONS else render(path)
+        rendered = render(path)
         if rendered:
             written[rendered[0]] = rendered[1]
     # A session keeps its file name, because the name comes from its start time and id.
@@ -189,10 +170,14 @@ def main():
              'The prompts typed in this project and the answers Claude gave, one file per session, oldest first. '
              'The tool calls between a prompt and its answer are counted and their content is left out. '
              '`bin/transcripts` writes these files from the session logs Claude Code keeps on this machine, '
-             'so run it again after a session to add it or to bring a continued one up to date.', '']
+             'so run it again after a session to add it or to bring a continued one up to date.', '',
+             '[The design prompt](desing-prompt.md) is the most important part of this task. It is the brief that '
+             '`DESIGN.md` answers, and the application was built from that design.', '']
     for name, text in sorted(written.items()):
         facts = text.split('\n')
-        index.append(f'- [{facts[0][2:]}]({name}): {facts[4][2:]}, s{facts[2][3:]}')
+        session = facts[5].split('`')[1]
+        remark = f' {REMARKS[session]}' if session in REMARKS else ''
+        index.append(f'- [{facts[0][2:]}]({name}): {facts[4][2:]}, s{facts[2][3:]}.{remark}')
     (OUT / 'README.md').write_text('\n'.join(index) + '\n', encoding='utf-8')
 
 
