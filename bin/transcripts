@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Write one Markdown transcript per Claude Code session of this project into transcripts/.
 
-A transcript has the prompts the user typed and the text Claude answered with. The work between them (tool calls,
-their output, Claude's thinking, injected context) is left out, and each run of tool calls is one line that counts them.
+A transcript has the prompts the user typed, those typed while Claude was working included, and the text Claude
+answered with. The work between them (tool calls, their output, Claude's thinking, injected context, the summary of a
+compacted conversation) is left out, and each run of tool calls is one line that counts them.
 
 Claude Code keeps a session as a JSONL file under ~/.claude/projects/<the project's path with / as ->/. Run this
 again at any time: it rewrites every transcript from those files, so a session that has continued gets its new turns.
@@ -30,6 +31,11 @@ REMARKS = {
 TAG = re.compile(r'<(system-reminder|local-command-caveat|task-notification)>.*?</\1>', re.S)
 COMMAND = re.compile(r'<command-name>(.*?)</command-name>.*?<command-args>(.*?)</command-args>', re.S)
 STDOUT = re.compile(r'<local-command-stdout>(.*?)</local-command-stdout>', re.S)
+# A shell command the user ran from the prompt with !, and what it printed.
+SHELL = re.compile(r'<bash-input>(.*?)</bash-input>', re.S)
+SHELL_OUTPUT = re.compile(r'<bash-stdout>(.*?)</bash-stdout>\s*<bash-stderr>(.*?)</bash-stderr>', re.S)
+# A Tailscale hostname names the machine and the tailnet. The repository is public, so a transcript shows neither.
+TAILNET_HOST = re.compile(r'\b[a-z0-9-]+\.tail[0-9a-f]+\.ts\.net\b')
 
 
 def local(timestamp):
@@ -58,6 +64,18 @@ def tool_line(counts):
     return f'*Claude worked: {total} tool {"call" if total == 1 else "calls"} ({names}).*'
 
 
+def queued_prompt(attachment):
+    """The text of a prompt the user typed while Claude was working, or None. Claude Code logs such a prompt as a
+    queued command and not as a user entry. Agent reports and task notices are queued the same way, with another
+    origin."""
+    if attachment.get('type') != 'queued_command' or (attachment.get('origin') or {}).get('kind') != 'human':
+        return None
+    prompt = attachment.get('prompt')
+    if isinstance(prompt, list):
+        prompt = '\n'.join(part.get('text', '') for part in prompt if part.get('type') == 'text')
+    return TAG.sub('', prompt or '').strip() or None
+
+
 def read(path):
     """The session as a title, some facts and a list of items: ('prompt' | 'command' | 'text' | 'answer', time, text)
     and ('tools', Counter)."""
@@ -68,7 +86,16 @@ def read(path):
         kind = entry.get('type')
         if kind == 'ai-title':
             title = entry.get('aiTitle') or title
+        if kind == 'attachment':
+            typed = queued_prompt(entry.get('attachment') or {})
+            # The same text right before it means the log also holds the prompt as a user entry.
+            if typed and not (items and items[-1][0] == 'prompt' and items[-1][2] == typed):
+                items.append(('prompt', entry['attachment'].get('timestamp') or entry.get('timestamp'), typed))
+            continue
         if kind not in ('user', 'assistant') or entry.get('isSidechain') or entry.get('isMeta'):
+            continue
+        # The summary Claude Code writes when it compacts a long conversation is logged as a user entry.
+        if entry.get('isCompactSummary'):
             continue
         version = entry.get('version') or version
         message = entry.get('message') or {}
@@ -104,7 +131,15 @@ def read(path):
             text = block['text']
             command = COMMAND.search(text)
             output = STDOUT.search(text)
-            if command:
+            shell = SHELL.search(text)
+            shell_output = SHELL_OUTPUT.search(text)
+            if shell:
+                items.append(('command', when, '! ' + shell.group(1).strip()))
+            elif shell_output:
+                printed = '\n'.join(part.strip() for part in shell_output.groups() if part.strip())
+                if items and items[-1][0] == 'command' and printed:
+                    items[-1] = ('command', items[-1][1], items[-1][2], printed)
+            elif command:
                 items.append(('command', when, ' '.join(part.strip() for part in command.groups() if part.strip())))
             elif output:
                 if items and items[-1][0] == 'command' and output.group(1).strip():
@@ -147,7 +182,8 @@ def render(path):
                 out += ['', '### Claude']
                 answering = True
             out += ['', tool_line(item[1]) if kind == 'tools' else item[2] if kind == 'answer' else demote(item[2])]
-    return f'{start:%Y-%m-%d-%H%M}-{path.stem[:8]}.md', '\n'.join(out) + '\n'
+    text = TAILNET_HOST.sub('<machine>.<tailnet>.ts.net', '\n'.join(out) + '\n')
+    return f'{start:%Y-%m-%d-%H%M}-{path.stem[:8]}.md', text
 
 
 def main():

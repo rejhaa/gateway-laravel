@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="590" viewBox="0 0 880 590" role="img" aria-label="Claude reaches the gateway's MCP server through a Tailscale Funnel and can only read and propose. Riku approves or rejects on the approval page or the chat card. ProposalService alone writes to Odoo and records every step in SQLite.">
+<style>
+  svg { --bg: #ffffff; --fg: #1d232b; --muted: #5d6874; --line: #c3cad2; --panel: #f5f7f9; --accent: #0b5cad;
+        color: var(--fg); font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  @media (prefers-color-scheme: dark) {
+    svg { --bg: #1c2229; --fg: #e5e9ee; --muted: #9aa5b1; --line: #46515e; --panel: #232a33; --accent: #6aa8ff; }
+  }
+  .bg { fill: var(--bg); }
+  text { fill: currentColor; font-size: 13px; }
+  .title { font-weight: 600; }
+  .sub { fill: var(--muted); font-size: 11px; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+  .hot { fill: var(--accent); }
+  .box { fill: var(--panel); stroke: var(--line); }
+  .zone { fill: none; stroke: var(--line); stroke-dasharray: 5 4; }
+  .ext { fill: none; stroke: var(--muted); stroke-dasharray: 4 3; }
+  .rule { stroke: var(--line); }
+  .edge { fill: none; stroke: currentColor; stroke-width: 1.3; }
+  .edge.hot { stroke: var(--accent); stroke-width: 1.8; }
+  .edge.dash { stroke: var(--muted); stroke-dasharray: 4 3; }
+  .head { fill: currentColor; }
+  .head.hot { fill: var(--accent); }
+  .head.dash { fill: var(--muted); }
+</style>
+<rect class="bg" width="880" height="590" rx="8"/>
+<defs>
+  <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="head"/></marker>
+  <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="head hot"/></marker>
+  <marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="head dash"/></marker>
+</defs>
+<rect class="box" x="190" y="20" width="220" height="56" rx="6"/>
+<text class="title" x="300.0" y="45.0" text-anchor="middle">Claude</text>
+<text class="sub" x="300.0" y="62.0" text-anchor="middle">claude.ai or Claude Code</text>
+<rect class="box" x="470" y="20" width="220" height="56" rx="6"/>
+<text class="title" x="580.0" y="45.0" text-anchor="middle">Riku's browser</text>
+<text class="sub" x="580.0" y="62.0" text-anchor="middle">supply chain lead</text>
+<rect class="box" x="190" y="130" width="220" height="56" rx="6"/>
+<text class="title" x="300.0" y="155.0" text-anchor="middle">Tailscale Funnel</text>
+<text class="sub" x="300.0" y="172.0" text-anchor="middle">public HTTPS to localhost:8000</text>
+<polyline class="edge " points="300,76 300,128" marker-end="url(#a)"/>
+<text class="sub" x="308" y="107" text-anchor="start">MCP with an OAuth token</text>
+<rect class="zone" x="160" y="230" width="560" height="340" rx="10"/>
+<text class="sub" x="174" y="250" text-anchor="start">Gateway (Laravel)</text>
+<rect class="box" x="190" y="270" width="220" height="56" rx="6"/>
+<text class="title" x="300.0" y="295.0" text-anchor="middle">MCP server</text>
+<text class="sub" x="300.0" y="312.0" text-anchor="middle">7 tools, none approves or writes</text>
+<rect class="box" x="470" y="270" width="220" height="56" rx="6"/>
+<text class="title" x="580.0" y="295.0" text-anchor="middle">Approval page and chat card</text>
+<text class="sub" x="580.0" y="312.0" text-anchor="middle">rejects Claude's OAuth token</text>
+<polyline class="edge " points="300,186 300,268" marker-end="url(#a)"/>
+<polyline class="edge hot" points="580,76 580,268" marker-end="url(#ah)"/>
+<text class="sub hot" x="588" y="160" text-anchor="start">web session or card token</text>
+<rect class="box" x="330" y="390" width="220" height="56" rx="6"/>
+<text class="title" x="440.0" y="415.0" text-anchor="middle">ProposalService</text>
+<text class="sub" x="440.0" y="432.0" text-anchor="middle">decides: rule, Riku or policy</text>
+<polyline class="edge " points="370,326 370,388" marker-end="url(#a)"/>
+<text class="sub" x="362" y="362" text-anchor="end">reads and proposes</text>
+<polyline class="edge hot" points="510,326 510,388" marker-end="url(#ah)"/>
+<text class="sub hot" x="518" y="362" text-anchor="start">approves or rejects</text>
+<rect class="box" x="330" y="490" width="220" height="56" rx="6"/>
+<text class="title" x="440.0" y="515.0" text-anchor="middle">SQLite</text>
+<text class="sub" x="440.0" y="532.0" text-anchor="middle">proposals and append-only audit log</text>
+<polyline class="edge " points="440,446 440,488" marker-end="url(#a)"/>
+<text class="sub" x="448" y="472" text-anchor="start">records every step</text>
+<rect class="box" x="10" y="390" width="130" height="56" rx="6"/>
+<text class="title" x="75.0" y="415.0" text-anchor="middle">Mailbox</text>
+<text class="sub" x="75.0" y="432.0" text-anchor="middle">.eml files</text>
+<rect class="box" x="740" y="390" width="130" height="56" rx="6"/>
+<text class="title" x="805.0" y="415.0" text-anchor="middle">Odoo</text>
+<text class="sub" x="805.0" y="432.0" text-anchor="middle">purchase orders</text>
+<polyline class="edge " points="330,418 142,418" marker-end="url(#a)"/>
+<text class="sub" x="245" y="410" text-anchor="middle">reads mail</text>
+<polyline class="edge " points="550,418 738,418" marker-end="url(#a)"/>
+<text class="sub" x="635" y="410" text-anchor="middle">reads and writes</text>
+</svg>

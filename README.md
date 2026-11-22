@@ -1,143 +1,109 @@
 # gateway-laravel
 
-A Laravel rebuild of the agent gateway's inbound exceptions demo. An agent in Claude works through a purchasing mailbox against the purchase orders in Odoo and proposes what the records should say. The gateway writes a change itself when one of the stated rules covers it, and otherwise holds it for Riku Lindgren, the supply chain lead, who approves or rejects it on a card in the chat or on the approval page. Every step lands in an append-only audit log.
+A Laravel application that sits between an agent (Claude) and the purchase orders in Odoo. The agent reads a purchasing mailbox and Odoo through the gateway's MCP tools and proposes changes one at a time. The gateway decides each proposal in code. A rule applies it to Odoo, or it waits for Riku Lindgren, the supply chain lead, to approve or reject it, or the policy denies it. Every operation goes into an append-only audit log.
 
-`DESIGN.md` is the design. It covers the decision rules, the data, the screens and the tests.
+`DESIGN.md` is the specification. It covers the decision rules, the data, the tools, the screens, the configuration and the tests.
 
-## Requirements
+## Contents
 
-- Docker with Compose, for Odoo.
-- PHP 8.4 or newer, Composer, and Node 22.12 or newer (or 20.19 or newer on the 20 line), for the Laravel application. Laravel Herd has all three.
-- PHP's `sodium` extension, which Laravel Passport needs for the OAuth keys.
-- `pdftotext`, which reads the text layer of PDF attachments. `soffice` and `qpdf` are needed only to regenerate the test cases.
 
-## Odoo
+| Path                                | What it holds                                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `DESIGN.md`                         | The design the code is built from                                                                      |
+| `docs/`                             | The two diagrams in this file                                                                          |
+| `app/Gateway/`                      | The core: proposals, decisions and the audit log. It knows no system.                                  |
+| `app/Processes/InboundPurchasing/`  | The purchasing process: its rules, what the agent may read and write, and the facts it reads from Odoo |
+| `app/Systems/`                      | The Odoo client and the mailbox                                                                        |
+| `app/Mcp/`                          | The MCP server, its seven tools and the approval card                                                  |
+| `app/Livewire/`, `resources/`       | The approval page, the history and the audit log                                                       |
+| `routes/`                           | The MCP route with OAuth (`ai.php`), the card's endpoints (`card.php`) and the pages (`web.php`)       |
+| `rules/`                            | The purchasing policy, the approval rules and the agent's access lists, as the agent reads them        |
+| `skills/inbound-exceptions/`        | The skill the agent works by                                                                           |
+| `odoo/`, `compose.yaml`, `bin/odoo` | The demo Odoo in Docker, its seed and the script that runs it                                          |
+| `cases/`                            | The demo mailbox and the test cases the finished gateway is run against                                |
+| `tests/`                            | The Pest suite, which fakes Odoo and the mailbox                                                       |
+| `transcripts/`                      | The Claude Code sessions that built this project                                                       |
 
-```sh
-bin/odoo up
-```
 
-The first run creates the `inbound` database, installs the modules, loads the base seed and checks every planted fact, which takes under a minute once the images are pulled. Odoo is then on http://localhost:8070. Sign in as `admin` / `admin`, or as one of the six people, whose password is their login: `riku` (supply chain lead), `elina` (purchasing assistant), `mikko` (buyer), `johanna` (finance), `tuomas` (production planner), `pekka` (warehouse).
+## Starting it up
 
-Set `ODOO_PORT` in `.env` to publish Odoo on another port. Postgres publishes no port.
+These steps work on Linux and macOS.
 
-| Command | What it does |
-|---|---|
-| `bin/odoo up` | Starts Postgres and Odoo. A fresh volume gets the database and the base seed. |
-| `bin/odoo seed` | Loads the base seed again, which undoes a case and every change made since. |
-| `bin/odoo seed cases/demo/demo-mailbox` | Loads the base seed and that case's records on top. Takes about 6 seconds. |
-| `bin/odoo down` | Stops the containers and keeps the database. |
-| `bin/odoo reset` | Stops the containers and deletes the database, so the next `up` starts fresh. |
+### Requirements
 
-Every seed recreates the users, so their Odoo sessions and API keys end. `bin/odoo` copies the new keys from the container to `odoo/data/`, which is not in git:
+- Docker with Compose, for Odoo
+- PHP 8.4 or newer with the `sodium` extension, and Composer
+- Node 22.12 or newer
+- `pdftotext`, which reads the text layer of PDF attachments
+- Tailscale, or another tunnel that gives a public HTTPS URL
 
-- `inbound-users.json` has an API key each for `riku` and `elina`, for Odoo's JSON-2 API.
-- `inbound-admin-key.txt` has an admin key.
-- `inbound-case-map.json` has the Odoo ids of the loaded case's records, by the case's own references.
+On macOS, install Docker Desktop and Tailscale, then run `brew install php composer node poppler`. On Linux, use your package manager. `pdftotext` is in the package `poppler-utils` on Debian and Ubuntu and in `poppler` on Arch.
 
-```sh
-KEY=$(jq -r .riku.api_key odoo/data/inbound-users.json)
-curl -s http://localhost:8070/json/2/purchase.order/search_read \
-  -H "Authorization: bearer $KEY" -H 'Content-Type: application/json' \
-  -d '{"domain": [["state", "=", "purchase"]], "fields": ["name", "partner_id"]}'
-```
-
-The customizations of this Odoo are part of the seed: the confirmed quantity and date on a purchase order line, the dispute fields on a vendor bill, the views that show them, and the purchasing assistant's group with its access restriction. `odoo/INBOUND-SEED.md` is the answer key for everything the seed loads.
-
-## The gateway
+### Run it
 
 ```sh
-composer setup
-bin/odoo up
-php artisan gateway:reset cases/demo/demo-mailbox
-composer dev
+composer setup                                      # dependencies, .env, database, OAuth keys, assets
+bin/odoo up                                         # Odoo on http://localhost:8070
+php artisan gateway:reset cases/demo/demo-mailbox   # loads the demo case, empties proposals and the audit log
+composer dev                                        # the gateway on http://localhost:8000
 ```
 
-`composer setup` installs the dependencies, creates `.env` and the SQLite database, generates Passport's OAuth keys in `storage/` when they are missing, and builds the assets. `gateway:reset` loads the case into Odoo and empties the gateway's proposals and audit log. `composer dev` serves the gateway on http://localhost:8000 with four PHP workers, so a slow Odoo call does not hold up the other requests, and runs a queue worker, `pail` and Vite beside it.
+The first `bin/odoo up` creates the database and loads the seed, which takes under a minute once the images are pulled. Sign in to Odoo as `admin` / `admin` or `riku` / `riku`.
 
-The approval page is http://localhost:8000. It signs Riku in on the first visit and asks nothing, because this version has one user. It has three pages:
+The approval page is [http://localhost:8000](http://localhost:8000). It signs Riku in on the first visit and asks nothing, because this version has one user.
 
-- Approvals shows what waits, grouped by mail, and refreshes every 5 seconds.
-- History shows every proposal, newest first, with its audit trail.
-- Audit log shows every row of the audit log, with filters.
+Run the tests with `composer test`. They need neither Docker nor the cases.
+
+### Configuration
+
+`composer setup` copies `.env.example` to `.env` and generates `APP_KEY`. The gateway starts with the values as they are, and `.env.example` explains each one. These are the ones you are likely to change:
+
+
+| Key in `.env`           | Default                            | When to change it                                                |
+| ----------------------- | ---------------------------------- | ---------------------------------------------------------------- |
+| `APP_URL`               | `http://localhost:8000`            | Set it to the tunnel URL before you connect Claude               |
+| `GATEWAY_MAILBOX_PATH`  | `cases/demo/demo-mailbox/messages` | Point it at the messages of the case that `gateway:reset` loaded |
+| `GATEWAY_TODAY`         | empty, the real date               | Set a date for a case whose story happens on another day         |
+| `GATEWAY_RULE_TIER`     | `true`                             | Set `false` to send every proposal to Riku                       |
+| `ODOO_PORT`, `ODOO_URL` | `8070`, `http://localhost:8070`    | Change both together when port 8070 is taken                     |
+| `MCP_ALLOWED_ORIGINS`   | empty                              | Add claude.ai's origin if its calls come back 403                |
+
+
+Restart `composer dev` after a change to `.env`.
 
 ### Connecting Claude
 
-Claude reaches the gateway over MCP at `/mcp`, with an OAuth token from Laravel Passport. claude.ai needs a public HTTPS URL, which a Tailscale Funnel gives:
+Claude reaches the gateway over MCP at `/mcp`, with an OAuth token. claude.ai connects from Anthropic's servers, so the gateway needs a tunnel that gives it a public HTTPS URL. A Tailscale Funnel does that.
 
 ```sh
 tailscale funnel 8000             # https://<machine>.<tailnet>.ts.net
 ```
 
-Set `APP_URL` to that URL, because the OAuth discovery documents and the card's allowed domain come from it.
+Funnel is off in a new tailnet. The first run of the command prints a link to the admin console, where you turn on Funnel and HTTPS certificates.
 
-- claude.ai: Customize, Connectors, Add custom connector, with the URL `https://<machine>.<tailnet>.ts.net/mcp`. Claude opens the authorization page, where Riku clicks Connect. Upload `skills/inbound-exceptions` as a zip under Customize, Skills.
-- Claude Code: `claude mcp add --transport http gateway https://<machine>.<tailnet>.ts.net/mcp`, then `/mcp` to authorize. Link the skill with `ln -s ../../skills/inbound-exceptions .claude/skills/inbound-exceptions`.
+Another tunnel works when it gives a public HTTPS URL on the standard port, keeps the same hostname between runs and passes the forwarded host and scheme headers. Cloudflare Tunnel and ngrok do that with a fixed hostname. Cloudflare's quick tunnel without an account gives a new hostname on every start, so `APP_URL` and the connector in Claude would change on each start. Only the Funnel has been run against this gateway.
 
-If claude.ai calls come back 403, add its origin to `MCP_ALLOWED_ORIGINS`.
+Set `APP_URL` in `.env` to the Funnel URL and restart `composer dev`, because the OAuth discovery documents and the card's allowed domain come from it. Close the Funnel when you are done. The sign-in asks nothing, so anyone who reaches the URL can connect.
 
-### The tools
+Then connect one of the clients:
 
-| Tool | What it does |
-|---|---|
-| `whoami` | Names the person the agent works for, their role, their Odoo login and today's date |
-| `get_policy` | Returns the purchasing policy, the approval rules and the agent access rules as markdown |
-| `mail_list_messages` | Lists the messages in the mailbox |
-| `mail_read_message` | Reads one message with the text of its attachments, numbered by page and line |
-| `odoo_search_read` | Reads allowed models and fields from Odoo as Riku, with the proposals already made on each line |
-| `propose` | Proposes a write to one record with a quote from the mail as evidence. The gateway applies it by rule, holds it for Riku, or denies it under the policy. |
-| `list_proposals` | Lists the proposals and their decisions, and shows the approval card in the chat |
+- **claude.ai.** Go to Customize, Connectors, Add custom connector, and enter `https://<machine>.<tailnet>.ts.net/mcp`. Claude opens the authorization page, where you click Connect. Upload `skills/inbound-exceptions` as a zip under Customize, Skills.
+- **Claude Code.** Run `claude mcp add --transport http gateway https://<machine>.<tailnet>.ts.net/mcp`, then `/mcp` to authorize. Link the skill with `ln -s ../../skills/inbound-exceptions .claude/skills/inbound-exceptions`. Claude Code shows the tool's text where claude.ai draws the approval card. Use it for development only, because an agent with a shell on this machine can reach the approval page itself (section 1 of `DESIGN.md`).
 
-No tool approves or rejects. Only the approval page and the card do, with Riku's session or the card's own token.
+If claude.ai calls come back 403, add its origin to `MCP_ALLOWED_ORIGINS` in `.env`.
 
-### Resetting between runs
+## Architecture
 
-```sh
-php artisan gateway:reset                          # the base seed only
-php artisan gateway:reset cases/demo/demo-mailbox  # the base seed and a case
-```
+![Claude reaches the gateway's MCP server through a Tailscale Funnel and can only read and propose. Riku approves or rejects on the approval page or the chat card. ProposalService alone writes to Odoo and records every step in SQLite.](docs/architecture.svg)
 
-A reseed gives every Odoo record a new id, so old proposals would point at other records. `gateway:reset` runs `bin/odoo seed` with the case, then drops and recreates the proposals and audit log tables. It keeps the user and the OAuth tables, so a connected Claude stays authorized. It runs only when `APP_ENV` is `local`, and when the seed fails it leaves the tables alone. Point `GATEWAY_MAILBOX_PATH` at the same case's messages.
+Claude has no tool that approves, rejects or writes. The blue path is the only one that takes a decision, and it rejects Claude's OAuth token.
 
-### Configuration
+## Data model
 
-| Key in `.env` | Default | What it sets |
-|---|---|---|
-| `GATEWAY_PROCESS` | `inbound-purchasing` | The business process `propose` uses |
-| `GATEWAY_RULE_TIER` | `true` | Whether rules may apply a change. With `false`, every change goes to Riku. |
-| `GATEWAY_TODAY` | none | A fixed date for a case whose story happens on another day |
-| `GATEWAY_TIMEZONE` | `Europe/Helsinki` | The zone of today and of the times on the screens |
-| `GATEWAY_USER_NAME` | `Riku Lindgren` | The person the gateway acts for |
-| `GATEWAY_USER_ROLE` | `supply chain lead` | Their role, shown in the top bar |
-| `GATEWAY_USER_ODOO_LOGIN` | `riku` | Their Odoo login, whose API key every Odoo call uses |
-| `ODOO_URL` | `http://localhost:8070` | Odoo's address |
-| `ODOO_KEYS_FILE` | `odoo/data/inbound-users.json` | The API keys `bin/odoo` writes after each seed |
-| `GATEWAY_MAILBOX_PATH` | `cases/demo/demo-mailbox/messages` | The directory of `.eml` files the agent reads |
-| `GATEWAY_CARD_TOKEN_HOURS` | `12` | How long a card in the chat may decide |
-| `MCP_ALLOWED_ORIGINS` | empty | Comma-separated origins allowed to call `/mcp` |
+![The proposals table is the centre. Each audit_log row may point at a proposal, a proposal may replace an earlier one, and a proposal points by id at an Odoo record and a mail message outside the database. The oauth tables point at the one user.](docs/data-model.svg)
 
-### Tests
+The gateway's own data is the `proposals` and `audit_log` tables in SQLite. Database triggers refuse every update and delete on `audit_log`. `oauth_*` stands for Passport's five tables. Purchase orders and mail stay in Odoo and the mailbox (the dashed boxes), and a proposal points at them by id. Section 5 of `DESIGN.md` lists every column. 
 
-```sh
-composer test
-```
+## Yhteenveto
 
-The tests fake Odoo and the mailbox, so they need neither Docker nor the cases.
-
-## Layout
-
-| Path | What it holds |
-|---|---|
-| `compose.yaml`, `bin/odoo` | The Odoo and Postgres containers and the script that runs them |
-| `odoo/` | Odoo's config, the container scripts `init.sh` and `seed.sh`, the base seed `inbound-seed.py`, the case loader `inbound-case.py` and the answer key `INBOUND-SEED.md` |
-| `cases/` | The test cases and their format, `CASE-FORMAT.md`. `demo/` is the mailbox of the demo walkthrough, `spike/` has nine cases and `hard/` seven. Each set has its generator in `_tools/`. |
-| `skills/inbound-exceptions/` | The skill the agent works by |
-| `rules/` | The purchasing policy, the rules that decide who approves a change, and what the agent may read and propose in Odoo |
-| `app/Gateway/` | The core: proposals, decisions, the audit log and the words on the screens. It knows no system. |
-| `app/Processes/InboundPurchasing/` | The purchasing process: its rules, what the agent may read and write, and the facts it reads from Odoo |
-| `app/Systems/` | The Odoo client and the mailbox |
-| `app/Mcp/` | The MCP server, its seven tools and the approval card |
-| `app/Livewire/`, `resources/views/` | The approval page, the history and the audit log |
-| `resources/css/proposals.css`, `resources/js/proposals-card.js` | The look of a proposal, shared by the pages and the card, and the card's script |
-| `routes/ai.php`, `routes/card.php`, `routes/web.php` | The MCP route with OAuth, the card's endpoints, and the pages |
-| `transcripts/`, `bin/transcripts` | The prompts and Claude's answers from the Claude Code sessions that built this project, one file per session, and the script that writes them from the local session logs |
+Yhteenveto sähköpostissa.
