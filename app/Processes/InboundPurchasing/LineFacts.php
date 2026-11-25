@@ -19,7 +19,7 @@ final readonly class LineFacts implements Facts
      * @param  list<string>  $productNames  default_code and name, and the supplier's product_code and product_name
      * @param  list<array{name: string, start: string|null, need: float}>  $waiting  manufacturing orders that wait on the line, by name
      * @param  string  $supplierName  the company the order's supplier belongs to
-     * @param  list<string>  $supplierAddresses  every email address of that company and its contacts, in lowercase
+     * @param  list<string>  $supplierDomains  the mail domains Odoo holds for that company, in lowercase
      */
     public function __construct(
         public int $lineId,
@@ -37,15 +37,18 @@ final readonly class LineFacts implements Facts
         public ?string $confirmedDate,
         public array $waiting = [],
         public string $supplierName = '',
-        public array $supplierAddresses = [],
+        public array $supplierDomains = [],
     ) {}
 
     /**
+     * A stored fact this version does not hold is left out, so a proposal
+     * that an earlier version stored still loads.
+     *
      * @param  array<string, mixed>  $stored  what toArray() returned
      */
     public static function fromArray(array $stored): self
     {
-        return new self(...$stored);
+        return new self(...array_filter($stored, fn (string $fact): bool => property_exists(self::class, $fact), ARRAY_FILTER_USE_KEY));
     }
 
     /** "V1 forged iron head (VG-HEAD-V1)", or the name alone when the product has no code. */

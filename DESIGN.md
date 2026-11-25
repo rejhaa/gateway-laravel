@@ -129,7 +129,7 @@ app/
       Effect.php                the Now and After rows and their notes
   Evidence/
     QuoteChecker.php            finds a quote, reads numbers and dates from it
-    SenderChecker.php           tells whether a sender's address belongs to an organization
+    SenderChecker.php           tells whether a sender's address is at an organization's mail domain
   Systems/
     Odoo/OdooClient.php         JSON-2 calls and error mapping
     Odoo/OdooReader.php         allowlisted search_read with domain validation
@@ -443,7 +443,7 @@ No rule applies. The reason is "a dispute on a vendor bill is decided by a perso
 
 - The line: `order_id`, `product_id`, `product_qty`, `date_planned`, `date_promised`, `x_confirmed_qty`, `x_confirmed_date`, `move_dest_ids`.
 - The order: `name`, `partner_ref`, `partner_id`, `state`.
-- The supplier: the `commercial_partner_id` of the order's `partner_id`, which is the company, with that company's `name` and the `email_normalized` of every `res.partner` of `type` `contact` whose `commercial_partner_id` it is. Those are the company and its contact persons. A delivery, invoice or other address under the company is left out, because it often holds the address of a forwarder or an accountant, whose whole domain would then pass as the supplier's. Odoo leaves archived contacts out of the search, so an archived contact's address stops counting.
+- The supplier: the `commercial_partner_id` of the order's `partner_id`, which is the company, with that company's `name` and `x_mail_domains`. A person fills that text field with the domains the company sends mail from, and `SenderChecker::domains()` reads it into a list. The email addresses of the company and its contacts are not read.
 - The product's names: `default_code` and `name` on `product.product`, and `product_code` and `product_name` on the `product.supplierinfo` rows in its `seller_ids` that belong to the order's supplier and to this product or its template.
 - Waiting manufacturing orders: the `stock.move` records in `move_dest_ids`, their `raw_material_production_id`, and each `mrp.production` with `name`, `date_start` and the sum of its moves' `product_uom_qty` as its need.
 
@@ -473,13 +473,13 @@ A rule applies a write only when the cited message comes from the order's suppli
 | Check | Phrase when it fails |
 |---|---|
 | `Message::$fromAddress` is not null | "the message has no single sender address" |
-| `LineFacts::$supplierAddresses` is not empty | "{supplier} has no email address in Odoo to check the sender against" |
-| `SenderChecker::belongsTo()` | "the sender {address} is not an address or a domain of {supplier} in Odoo" |
+| `LineFacts::$supplierDomains` is not empty | "{supplier} has no mail domain in Odoo to check the sender against" |
+| `SenderChecker::belongsTo()` | "the sender {address} is not at a mail domain of {supplier} in Odoo" |
 | `Message::$fromVerified` | "the mail server did not verify that the message comes from {address}" |
 
-The check answers two separate questions. Odoo answers whose address it is, and the receiving mail server answers whether the message really comes from it.
+The check answers two separate questions. Odoo answers whose domain the address is at, and the receiving mail server answers whether the message really comes from it.
 
-**Whose address.** `SenderChecker::belongsTo($address, $addresses)` is true when the address is one of the supplier's addresses, or when its domain is the domain of one of them and is not a shared domain. `SenderChecker::SHARED_DOMAINS` lists the domains where anyone can get an address, such as `gmail.com` and `hinet.net`, and a subdomain of a listed domain is shared too. At a shared domain only the whole address counts. Domains are compared whole, so `mail.taiyuan.example` is not `taiyuan.example`. The unit is the domain because that is what mail authentication proves. A supplier whose contact has an address at a shared domain that the list misses lets every customer of that provider pass as the supplier, so the list grows when such a provider turns up.
+**Whose domain.** Odoo holds the supplier's mail domains in `x_mail_domains` on the company, a text field on `res.partner` that this database adds (`odoo/INBOUND-SEED.md`). A person enters the domains the company sends mail from, separated by commas, semicolons or white space. `SenderChecker::domains()` reads them in lowercase and drops an @ written in front of one, and `SenderChecker::belongsTo($address, $domains)` is true when the address's domain is one of them. Domains are compared whole, so `mail.taiyuan.example` is not `taiyuan.example`. The unit is the domain because that is what mail authentication proves. The email addresses Odoo holds for the company and its contacts decide nothing, because a contact's address at `gmail.com` would make every sender at `gmail.com` the supplier's. A supplier that mails from such an address gets no mail domain, and its messages wait for Riku. An entry that is no domain, such as a whole address, equals no sender's domain. No proposal writes the field, because `WRITABLE` holds nothing on `res.partner`. The gateway takes the field as a person wrote it, so a mail provider's domain entered there lets every customer of that provider pass as the supplier.
 
 **Really from it.** The sender writes the From header, so its text proves nothing. The receiving mail server checks SPF, DKIM and DMARC when the message arrives and records the outcome in an `Authentication-Results` header (RFC 8601). `AuthenticationResults::verifies($headers, $authservId, $fromDomain)` is true when a header written by the receiving server holds one of these results:
 
@@ -873,8 +873,8 @@ One dataset per rule. Each row starts from a `LineFacts` that passes and changes
 | each shared condition fails alone and yields its phrase (13 rows in `SharedConditionsTest`, and the rule tier switch in `ProposalServiceTest`) | a condition is dropped or its phrase is wrong |
 | a sender at another organization fails | a forwarder, a colleague or a stranger who knows the order number moves a date by rule |
 | a sender the mail server did not verify fails, in `SharedConditionsTest` and through `propose` | a forged From header passes as the supplier |
-| a supplier with no address in Odoo fails | a supplier nobody gave an address accepts every sender |
-| a verified address at the supplier's domain that Odoo does not hold passes | every confirmation from a new clerk goes to Riku |
+| a supplier with no mail domain in Odoo fails | a supplier nobody gave a mail domain accepts every sender |
+| a verified address at the supplier's second mail domain passes | only the first of a supplier's mail domains counts |
 | a partial quantity fails both rules | a short confirmation is recorded as full |
 | the rule tier off sends a passing write to Riku | the switch does nothing |
 | a second proposal from the same message on the same line waits | one document is applied twice by rule |
@@ -895,8 +895,9 @@ One dataset per rule. Each row starts from a `LineFacts` that passes and changes
 
 | Test | Bug it catches |
 |---|---|
-| an address on record and a colleague at the same domain belong, another domain, a subdomain and a domain that ends alike do not | a stranger passes as the organization, or a new colleague is turned away |
-| at a shared domain only the address on record belongs | everyone with a `gmail.com` address passes as a supplier that has one |
+| an address at one of the organization's mail domains belongs, and another domain, a subdomain, a domain that ends alike and the domain before a second @ do not | a stranger passes as the organization, or a colleague at its own domain is turned away |
+| the field's domains are read in lowercase, with or without an @, across commas and line breaks, and an empty field gives none | a domain a person wrote differently does not count, or an empty field counts as a domain |
+| a whole address in the field takes no sender | an address in the field opens its domain, or every domain, to all senders |
 | a DMARC pass, or a DKIM or SPF pass, counts only for the From domain | a sender who passes for a domain of their own forges the supplier's address |
 | a header from another server, a longer server id and a server id followed by anything but a version do not count | a header the sender added is read as the receiving server's |
 | a result inside a quoted string or a comment is not read, also after an escaped quote or parenthesis and inside a nested comment | a sender forges a pass with text the receiving server copied into its header |
@@ -905,11 +906,11 @@ One dataset per rule. Each row starts from a `LineFacts` that passes and changes
 | the sender is the one From address, and two addresses or two From headers give none | the supplier's address in a display name or in a second address counts as the sender |
 | no server id configured verifies no sender | a header from any server verifies a sender |
 | a changed server id reads a cached message again | a sender verified under the old id stays verified |
-| the supplier's addresses are those of its company and contacts, and of no other company (`LineFactsReaderTest`) | an order on a contact person has no addresses, or another company's contact counts |
+| the supplier's mail domains are those of its company, and neither a contact's field nor a contact's address adds one (`LineFactsReaderTest`) | an order on a contact person has no mail domains, or a contact's `gmail.com` address counts |
 | the approval page shows the address after the name (`WebPagesTest`) | Riku sees only the name the sender chose |
 | the approval page marks an unverified sender with the rule tier off (`WebPagesTest`) | a forged sender looks like the supplier where the reasons say nothing about the sender |
 | the card gets the real address for a name written as an address, and `verified` false (`CardTest`) | a display name stands in for the address, or the card cannot mark a forged sender |
-| a delivery address under the supplier adds no address (`LineFactsReaderTest`) | a forwarder's whole domain passes as the supplier's |
+| an empty field gives no mail domain (`LineFactsReaderTest`) | the false Odoo returns for an empty field is read as a domain |
 
 ### Access (`tests/Feature/AccessTest.php`)
 
@@ -961,6 +962,7 @@ One test per tool through `GatewayServer::actingAs($riku)->tool(...)`, plus the 
 | approving a changed record sets `stale` and writes nothing | an approval overwrites a newer value |
 | approving when the record's order name differs sets `stale` | after a reseed the write lands on another order's line |
 | approving after a waiting manufacturing order's start moved sets `stale` | Riku approves on a gap the screen misstated |
+| stored facts that hold a fact this version no longer has still load (`tests/Unit/LineFactsTest.php`) | a proposal stored before a fact was removed breaks the history page and its approval |
 | an Odoo 403 on approval sets `failed` with Odoo's message | a refused write is shown as done |
 | a timeout on write followed by a matching re-read sets `applied` | an unknown outcome is recorded as failed and proposed again |
 | rejecting without a reason is refused | the agent gets a no with nothing to act on |
@@ -1040,16 +1042,15 @@ Three of these outcomes come from the gateway and not from a choice the agent ma
 - A forwarder's notice that describes the goods in general words ("60 pcs steel shafts") holds no passage with the product's name or the supplier's code, so the shared conditions send it to Riku. `expected` in spike-03 has a rule apply it, and the same condition held P00102 in the demo case. A forwarder is also not the order's supplier, so the sender condition holds every forwarder's notice whatever its wording.
 - A scan cannot be read (section 1), so hard-02 cannot score above safe.
 
-The agent runs above were made before the sender condition existed. Every message a rule applied in them comes from a verified address of the order's supplier, which a read of all case mail through `FileMailbox` and `SenderChecker` confirmed, so the condition changes none of those outcomes.
+The agent runs above were made before the sender condition existed, and the two demo runs before the demo mailbox held mails 11 to 13. Every message a rule applied in them comes from a verified address at a mail domain of the order's supplier, which a read of all case mail through `FileMailbox` and `SenderChecker` confirmed, so the condition changes none of those outcomes.
 
-**Sender case.** The four messages of `cases/demo/demo-sender` were proposed through `ProposalService` against the seeded Odoo and the case's mail files, one proposal per message, with no agent. Each message states the ordered quantity for a date a rule would record, so the sender alone decides the outcome.
+**Sender mails.** Mails 11 to 13 of `cases/demo/demo-mailbox` were proposed through `ProposalService` against the seeded Odoo and the case's mail files, one proposal per message, with no agent. Each message states the ordered quantity for a date a rule would record, so the sender alone decides the outcome.
 
 | Message | Sender | Outcome |
 |---|---|---|
-| Confirmation of P00101 | Tai-Yuan's address in Odoo, verified | applied by `confirmation-as-ordered` |
-| Confirmation of P00102 | a colleague at Tai-Yuan's domain whose address Odoo does not hold, verified | applied by `confirmation-as-ordered` |
-| Revised confirmation of P00103, 10 days later | Tai-Yuan's address, with SPF and DMARC failed | held: "the mail server did not verify that the message comes from orders@taiyuan-forge.example" |
-| Confirmation of P00104 | `export@saigon-grip.example`, verified for that domain | held: "the sender export@saigon-grip.example is not an address or a domain of Saigon Grip Works Co., Ltd. in Odoo" |
+| Confirmation of P00111 | `kevin.huang@taiyuan-forge.example`, an address Odoo does not hold at one of Tai-Yuan's mail domains, verified | applied by `confirmation-as-ordered` |
+| Revised confirmation of P00112, 10 days later | `orders@taiyuan-forge.example`, with SPF and DMARC failed | held: "the mail server did not verify that the message comes from orders@taiyuan-forge.example" |
+| Confirmation of P00113 | `export@saigon-grip.example`, verified for that domain | held: "the sender export@saigon-grip.example is not at a mail domain of Saigon Grip Works Co., Ltd. in Odoo" |
 
 Each held proposal has that one reason, so a rule would have applied it without the sender condition. The approval page showed both with the sender's address after the name.
 

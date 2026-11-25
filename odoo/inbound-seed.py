@@ -88,12 +88,13 @@ TAIYUAN = 'Tai-Yuan Forge & Shaft Co., Ltd.'
 SAIGON = 'Saigon Grip Works Co., Ltd.'
 SUPPLIERS = [
     # name, city, country xmlid, tax id, supplier lead time in days, the company's own address,
-    # a contact person and her address. The gateway takes a message as the supplier's only when
-    # its sender has one of these addresses or their domains.
+    # a contact person and her address, the company's mail domains. The gateway takes a message
+    # as the supplier's only when its sender is at one of the mail domains. The addresses decide
+    # nothing.
     (TAIYUAN, 'Kaohsiung', 'base.tw', '84149738', 42, 'orders@taiyuan-forge.example',
-     'Mei-Ling Chen', 'meiling.chen@tyforge.com.tw'),
+     'Mei-Ling Chen', 'meiling.chen@tyforge.com.tw', 'taiyuan-forge.example, tyforge.com.tw'),
     (SAIGON, 'Ho Chi Minh City', 'base.vn', '0315829464', 35, 'export@saigongrip.example',
-     'Linh Tran', 'linh.tran@saigongrip.com.vn'),
+     'Linh Tran', 'linh.tran@saigongrip.com.vn', 'saigongrip.example, saigongrip.com.vn'),
 ]
 
 HEAD = 'V1 forged iron head'
@@ -178,6 +179,11 @@ CUSTOM_FIELDS = [
         (0, 0, {'value': 'settled', 'name': 'Settled', 'sequence': 3}),
     ]}),
     ('account.move', 'x_dispute_note', 'text', 'Dispute note', {}),
+    ('res.partner', 'x_mail_domains', 'char', 'Mail domains', {'help': (
+        'The domains this company sends mail from, separated by commas, such as "example.com, example.com.tw". '
+        'The gateway lets a rule apply a change only from a message whose sender is at one of them. '
+        'Enter only domains the company owns. A mail provider such as gmail.com is not one, because anyone '
+        'can get an address there. Leave the field empty for a company that mails from such an address.')}),
 ]
 
 OPEN_STATES = ['draft', 'sent', 'to approve']
@@ -415,7 +421,8 @@ if env['ir.default']._get('account.move', 'x_dispute') != 'none':
 
 # The custom fields on the screens a person opens: the requested and confirmed values as
 # columns of the purchase order's lines, with the planned date shown, and the dispute on the
-# vendor bill's form and in the bills list. Each view is an extension of Odoo's own, kept
+# vendor bill's form and in the bills list, and the mail domains under the website on the form
+# of a partner that has no company above it. Each view is an extension of Odoo's own, kept
 # under an external id so a later run updates it in place.
 SEED_VIEWS = [
     ('view_po_form_confirmed', 'purchase.purchase_order_form', 'purchase.order', """
@@ -446,6 +453,12 @@ SEED_VIEWS = [
     <field name="x_dispute_note" invisible="x_dispute == 'none'"/>
   </xpath>
 </data>"""),
+    ('view_partner_form_mail_domains', 'base.view_partner_form', 'res.partner', """
+<data>
+  <xpath expr="//field[@name='website']" position="after">
+    <field name="x_mail_domains" placeholder="e.g. example.com" invisible="parent_id"/>
+  </xpath>
+</data>"""),
     ('view_bill_list_dispute', 'account.view_in_invoice_bill_tree', 'account.move', """
 <data>
   <xpath expr="//field[@name='status_in_payment']" position="after">
@@ -471,6 +484,8 @@ bill_form = env['account.move'].get_views([(env.ref('account.view_move_form').id
 bill_list = env['account.move'].get_views([(env.ref('account.view_in_invoice_bill_tree').id, 'list')])['views']['list']['arch']
 check('name="x_dispute"' in bill_form and 'name="x_dispute_note"' in bill_form and 'name="x_dispute"' in bill_list,
       'the vendor bill form and list show the dispute')
+partner_form = env['res.partner'].get_views([(env.ref('base.view_partner_form').id, 'form')])['views']['form']['arch']
+check('name="x_mail_domains"' in partner_form, 'the partner form shows the mail domains')
 
 # The purchasing assistant may not change a confirmed order. In Odoo 20 there is no
 # ir.rule: access is ir.access, where rows with a group are permissions OR'd across a
@@ -527,7 +542,7 @@ riku, elina = users['riku'], users['elina']
 
 suppliers = {}
 supplier_delay = {}
-for name, city, country_xmlid, vat, delay, email, contact_name, contact_email in SUPPLIERS:
+for name, city, country_xmlid, vat, delay, email, contact_name, contact_email, mail_domains in SUPPLIERS:
     # "Always" grouping: every replenishment need of the supplier lands on its open
     # request for quotation, so MO-1 and MO-2 share lines.
     suppliers[name] = env['res.partner'].create({
@@ -536,16 +551,19 @@ for name, city, country_xmlid, vat, delay, email, contact_name, contact_email in
         'country_id': env.ref(country_xmlid).id,
         'vat': vat,
         'email': email,
+        'x_mail_domains': mail_domains,
         'group_rfq': 'all',
         'buyer_id': riku.id,
     })
     env['res.partner'].create({'name': contact_name, 'parent_id': suppliers[name].id, 'email': contact_email})
     supplier_delay[name] = delay
 check(all(p.is_company for p in suppliers.values()), 'suppliers are companies')
-for name, *_rest, email, _contact_name, contact_email in SUPPLIERS:
+for name, *_rest, email, _contact_name, contact_email, mail_domains in SUPPLIERS:
     members = env['res.partner'].search([('commercial_partner_id', '=', suppliers[name].id)])
     check(sorted(members.mapped('email_normalized')) == sorted([email, contact_email]),
           f"{name} has its own address and its contact's")
+    check(suppliers[name].x_mail_domains == mail_domains and not any((members - suppliers[name]).mapped('x_mail_domains')),
+          f'{name} has its mail domains and its contact has none')
 
 products = {}
 for name, code, cost, supplier in COMPONENTS:

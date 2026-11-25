@@ -649,7 +649,8 @@ def case_05():
 
 def case_06():
     cid = "hard-06-etd-eta-no-delivery-date"
-    supplier = {"name": XEB, "country": "CN", "city": "Xiamen", "lead_days": 60, "email": "sales@everbright-sports.cn"}
+    supplier = {"name": XEB, "country": "CN", "city": "Xiamen", "lead_days": 60, "email": "sales@everbright-sports.cn",
+                "mail_domains": "everbright-sports.cn"}
     product = {"ref": "VG-BAG-STAND-BK", "name": PRODUCTS["VG-BAG-STAND-BK"][0], "cost": 41.0, "supplier": XEB}
     pos = [po("P00101", XEB, "2026-09-25", [line("VG-BAG-STAND-BK", 300, "2026-12-01")])]
     html = d.order_confirmation(

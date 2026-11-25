@@ -9,7 +9,6 @@ the purchasing mailbox the agent works through.
 ```
 cases/
   demo/demo-mailbox/     the case of the demo walkthrough (demo/README.md)
-  demo/demo-sender/      four confirmations that differ in who sent them (demo/README.md)
   spike/spike-NN-*/      nine cases, one per scene of the base seed (spike/INDEX.md)
   hard/hard-NN-*/        seven harder development cases (hard/INDEX.md)
 ```
@@ -66,12 +65,14 @@ through the mailbox. The run gives it to the agent.
 ### setup
 
 - `suppliers`: added suppliers, each `{ "name", "country", "city",
-  "lead_days" }` and an optional `"email"`, the supplier's address in
-  Odoo. The base suppliers are named exactly `Tai-Yuan Forge & Shaft Co.,
-  Ltd.` and `Saigon Grip Works Co., Ltd.`, and `odoo/INBOUND-SEED.md`
-  gives their addresses. The gateway takes a message as a supplier's only
-  when its sender has one of the supplier's addresses or their domains, so
-  a supplier without an address has no message a rule applies.
+  "lead_days" }` with an optional `"email"`, the supplier's address in
+  Odoo, and an optional `"mail_domains"`, the domains the supplier sends
+  mail from, separated by commas. The base suppliers are named exactly
+  `Tai-Yuan Forge & Shaft Co., Ltd.` and `Saigon Grip Works Co., Ltd.`,
+  and `odoo/INBOUND-SEED.md` gives their addresses and mail domains. The
+  gateway takes a message as a supplier's only when its sender is at one
+  of the supplier's mail domains, so a supplier without one has no
+  message a rule applies.
 - `products`: added products, each `{ "ref", "name", "cost", "supplier" }`.
   Added products are bought for stock and feed no manufacturing order.
 - `vendor_codes`: the supplier's own code and name for a product, each

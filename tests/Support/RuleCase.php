@@ -112,7 +112,7 @@ final readonly class RuleCase
             'confirmedDate' => null,
             'waiting' => [],
             'supplierName' => 'Tai-Yuan Forge & Shaft',
-            'supplierAddresses' => ['sales@taiyuan.example', 'mei.lin@taiyuan.example'],
+            'supplierDomains' => ['taiyuan.example'],
         ];
     }
 

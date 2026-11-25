@@ -33,20 +33,30 @@ it('reads the order supplier\'s names for the product and no one else\'s', funct
     expect($facts->productNames)->toBe(['VG-HEAD-V1', 'V1 forged iron head', 'TY-H1', 'Iron head V1']);
 });
 
-// Bug: an order placed on a contact person has no company addresses, or the address of another company or of a
-// forwarder on the supplier's delivery address counts as the supplier's.
-it('reads the addresses of the supplier\'s company and its contacts and no one else\'s', function (): void {
+// Bug: an order placed on a contact person has no mail domains, or a domain entered on the contact, or the domain
+// of a contact's address, counts as the supplier's.
+it('reads the mail domains of the supplier\'s company and nothing else', function (): void {
     $odoo = FakeOdoo::start()->line(order: ['partner_id' => [4, 'Tai-Yuan Forge & Shaft, Mei Lin']]);
-    $company = [FakeOdoo::SUPPLIER, 'Tai-Yuan Forge & Shaft'];
-    $odoo->records['res.partner'][4] = ['name' => 'Mei Lin', 'commercial_partner_id' => $company, 'type' => 'contact', 'email_normalized' => 'mei.lin@taiyuan.example'];
-    $odoo->records['res.partner'][5] = ['name' => 'Kaohsiung plant', 'commercial_partner_id' => $company, 'type' => 'contact', 'email_normalized' => false];
-    $odoo->records['res.partner'][6] = ['name' => 'Other forge', 'commercial_partner_id' => [6, 'Other forge'], 'type' => 'contact', 'email_normalized' => 'sales@other.example'];
-    $odoo->records['res.partner'][7] = ['name' => 'Shipping', 'commercial_partner_id' => $company, 'type' => 'delivery', 'email_normalized' => 'ops@forwarder.example'];
+    $odoo->records['res.partner'][FakeOdoo::SUPPLIER]['x_mail_domains'] = 'Taiyuan.example, @tyforge.example';
+    $odoo->records['res.partner'][4] = [
+        'name' => 'Mei Lin',
+        'commercial_partner_id' => [FakeOdoo::SUPPLIER, 'Tai-Yuan Forge & Shaft'],
+        'email_normalized' => 'mei.lin@gmail.com',
+        'x_mail_domains' => 'gmail.com',
+    ];
 
     $facts = app(LineFactsReader::class)->read(Inbound::agent(), FakeOdoo::LINE);
 
     expect($facts->supplierName)->toBe('Tai-Yuan Forge & Shaft')
-        ->and($facts->supplierAddresses)->toBe(['sales@taiyuan.example', 'mei.lin@taiyuan.example']);
+        ->and($facts->supplierDomains)->toBe(['taiyuan.example', 'tyforge.example']);
+});
+
+// Bug: the false Odoo returns for an empty field is read as a domain, so the supplier seems to have one.
+it('reads no mail domain for a supplier whose field is empty', function (): void {
+    $odoo = FakeOdoo::start()->line();
+    $odoo->records['res.partner'][FakeOdoo::SUPPLIER]['x_mail_domains'] = false;
+
+    expect(app(LineFactsReader::class)->read(Inbound::agent(), FakeOdoo::LINE)->supplierDomains)->toBe([]);
 });
 
 // Bug: a manufacturing order that needs the line through two moves counts twice, or its need is wrong.

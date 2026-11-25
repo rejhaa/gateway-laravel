@@ -70,12 +70,12 @@ A rule applies a write only when the cited message comes from the order's suppli
 | Check | Phrase when it fails |
 |---|---|
 | The message has one From header with one address | "the message has no single sender address" |
-| The supplier has an email address in Odoo | "{supplier} has no email address in Odoo to check the sender against" |
-| The sender's address belongs to the supplier | "the sender {address} is not an address or a domain of {supplier} in Odoo" |
+| The supplier has a mail domain in Odoo | "{supplier} has no mail domain in Odoo to check the sender against" |
+| The sender's address is at one of the supplier's mail domains | "the sender {address} is not at a mail domain of {supplier} in Odoo" |
 | The mail server verified the sender | "the mail server did not verify that the message comes from {address}" |
 
-- The supplier is the company the order's `partner_id` belongs to, which is its `commercial_partner_id`. The supplier's addresses are the email addresses of that company and of every contact under it, as Odoo keeps them in `email_normalized`. A delivery, invoice or other address under the company is not a contact and does not count, because it often holds the address of a forwarder or an accountant.
-- An address belongs to the supplier when it is one of those addresses, or when its domain is the domain of one of them. A domain where anyone can get an address, such as `gmail.com`, names no company, so at such a domain only the whole address counts. A subdomain is a different domain.
+- The supplier is the company the order's `partner_id` belongs to, which is its `commercial_partner_id`. Its mail domains are the domains a person entered in the company's Mail domains field in Odoo (`x_mail_domains`), separated by commas.
+- The sender has to be at one of those domains. A subdomain is a different domain. The email addresses Odoo holds for the supplier and its contacts decide nothing, so a supplier that mails from an address at a mail provider such as `gmail.com` has no mail domain, and its messages wait for Riku.
 - The sender writes the From header, so the address alone proves nothing. The sender is verified when the receiving mail server recorded that DMARC passed for the address's domain, or that DKIM or SPF passed for that same domain. A DKIM or SPF pass for another domain does not count, because every sender passes both for a domain of their own. A DMARC fail for the address's domain means the sender is not verified, whatever else the server recorded.
 - The name shown in a From header is the sender's choice and decides nothing. The approval screens show the address after the name, and mark a sender the mail server did not verify with "sender not verified" on every proposal, whatever its reasons.
 

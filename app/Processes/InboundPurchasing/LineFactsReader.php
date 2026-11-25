@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Processes\InboundPurchasing;
 
+use App\Evidence\SenderChecker;
 use App\Gateway\Actor;
 use App\Gateway\InputError;
 use App\Systems\Odoo\Exceptions\OdooException;
@@ -21,9 +22,6 @@ final class LineFactsReader
 
     private const LINE_FIELDS = ['order_id', 'product_id', 'product_qty', 'date_planned', 'date_promised', 'x_confirmed_qty', 'x_confirmed_date', 'move_dest_ids'];
 
-    /** More partners than any one company has. Addresses beyond it do not count, so their senders wait for a person. */
-    private const ORGANIZATION_LIMIT = 1000;
-
     public function __construct(private readonly OdooClient $odoo) {}
 
     /**
@@ -40,7 +38,7 @@ final class LineFactsReader
         $order = $this->odoo->read($actor, 'purchase.order', [self::id($line['order_id'])], ['name', 'partner_ref', 'partner_id', 'state'])[0];
         $product = $this->odoo->read($actor, 'product.product', [$productId], ['default_code', 'name', 'seller_ids'])[0];
         $supplierId = self::id($order['partner_id']);
-        $supplier = $supplierId === null ? ['name' => '', 'addresses' => []] : $this->supplier($actor, $supplierId);
+        $supplier = $supplierId === null ? ['name' => '', 'domains' => []] : $this->supplier($actor, $supplierId);
 
         return new LineFacts(
             lineId: $lineId,
@@ -58,39 +56,29 @@ final class LineFactsReader
             confirmedDate: self::localDate($line['x_confirmed_date']),
             waiting: $this->waiting($actor, $line['move_dest_ids']),
             supplierName: $supplier['name'],
-            supplierAddresses: $supplier['addresses'],
+            supplierDomains: $supplier['domains'],
         );
     }
 
     /**
      * The company the order's supplier belongs to, which is the supplier
-     * itself or the company of a contact person, with the email addresses of
-     * that company and of every contact under it. A delivery, invoice or
-     * other address under the company is left out, because it often holds
-     * the address of a forwarder or an accountant, whose whole domain would
-     * then pass as the supplier's. An archived contact is not read, so its
-     * address stops counting.
+     * itself or the company of a contact person, with the mail domains a
+     * person entered for that company in x_mail_domains. The email addresses
+     * of the company and its contacts decide nothing, because an address at
+     * gmail.com would make every sender at gmail.com the supplier's.
      *
-     * @return array{name: string, addresses: list<string>}
+     * @return array{name: string, domains: list<string>}
      */
     private function supplier(Actor $actor, int $supplierId): array
     {
-        $partner = $this->odoo->read($actor, 'res.partner', [$supplierId], ['name', 'commercial_partner_id'])[0];
+        $fields = ['name', 'commercial_partner_id', 'x_mail_domains'];
+        $partner = $this->odoo->read($actor, 'res.partner', [$supplierId], $fields)[0];
         $companyId = self::id($partner['commercial_partner_id']) ?? $supplierId;
-        $name = (string) $partner['name'];
-        $addresses = [];
-
-        foreach ($this->odoo->searchRead($actor, 'res.partner', [['commercial_partner_id', '=', $companyId], ['type', '=', 'contact']], ['name', 'email_normalized'], self::ORGANIZATION_LIMIT) as $member) {
-            if ($member['id'] === $companyId) {
-                $name = (string) $member['name'];
-            }
-
-            $addresses[] = self::text($member['email_normalized']);
-        }
+        $company = $companyId === $supplierId ? $partner : $this->odoo->read($actor, 'res.partner', [$companyId], $fields)[0];
 
         return [
-            'name' => $name,
-            'addresses' => array_values(array_unique(array_map(strtolower(...), array_filter($addresses, fn (?string $address): bool => $address !== null)))),
+            'name' => (string) $company['name'],
+            'domains' => SenderChecker::domains(self::text($company['x_mail_domains']) ?? ''),
         ];
     }
 

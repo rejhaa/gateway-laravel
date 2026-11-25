@@ -8,7 +8,8 @@
         "country": "CN",
         "city": "Xiamen",
         "lead_days": 60,
-        "email": "sales@everbright-sports.cn"
+        "email": "sales@everbright-sports.cn",
+        "mail_domains": "everbright-sports.cn"
       }
     ],
     "products": [

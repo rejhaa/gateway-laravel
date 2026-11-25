@@ -79,8 +79,7 @@ final class FakeOdoo
         $this->records['res.partner'][self::SUPPLIER] = [
             'name' => 'Tai-Yuan Forge & Shaft',
             'commercial_partner_id' => [self::SUPPLIER, 'Tai-Yuan Forge & Shaft'],
-            'type' => 'contact',
-            'email_normalized' => 'sales@taiyuan.example',
+            'x_mail_domains' => 'taiyuan.example',
         ];
 
         $this->records['product.product'][self::PRODUCT] = [

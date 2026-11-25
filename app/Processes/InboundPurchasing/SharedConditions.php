@@ -89,9 +89,9 @@ final class SharedConditions
 
     /**
      * The cited message has to come from the order's supplier. Its one sender
-     * address has to belong to the supplier's company in Odoo, and the
-     * receiving mail server has to have verified it, because the sender
-     * writes the From header. A forwarder or a colleague who passes a
+     * address has to be at a mail domain Odoo holds for the supplier's
+     * company, and the receiving mail server has to have verified it, because
+     * the sender writes the From header. A forwarder or a colleague who passes a
      * document on is not the supplier, so such a message waits for a person.
      */
     private static function senderFailure(LineFacts $facts, Message $message): ?string
@@ -100,12 +100,12 @@ final class SharedConditions
             return 'the message has no single sender address';
         }
 
-        if ($facts->supplierAddresses === []) {
-            return "{$facts->supplierName} has no email address in Odoo to check the sender against";
+        if ($facts->supplierDomains === []) {
+            return "{$facts->supplierName} has no mail domain in Odoo to check the sender against";
         }
 
-        if (! (new SenderChecker)->belongsTo($message->fromAddress, $facts->supplierAddresses)) {
-            return "the sender {$message->fromAddress} is not an address or a domain of {$facts->supplierName} in Odoo";
+        if (! (new SenderChecker)->belongsTo($message->fromAddress, $facts->supplierDomains)) {
+            return "the sender {$message->fromAddress} is not at a mail domain of {$facts->supplierName} in Odoo";
         }
 
         if (! $message->fromVerified) {

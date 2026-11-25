@@ -33,7 +33,7 @@ it('fails each shared condition alone with its phrase', function (array $change,
     // Bug: a forwarder, a colleague or a stranger who knows the order number moves a date by rule.
     'the sender is at another organization' => [
         ['evidence' => ['fromAddress' => 'tracking@forwarder.example']],
-        ['the sender tracking@forwarder.example is not an address or a domain of Tai-Yuan Forge & Shaft in Odoo'],
+        ['the sender tracking@forwarder.example is not at a mail domain of Tai-Yuan Forge & Shaft in Odoo'],
     ],
     // Bug: a forged From header passes as the supplier.
     'the mail server did not verify the sender' => [
@@ -43,16 +43,16 @@ it('fails each shared condition alone with its phrase', function (array $change,
     // Bug: the checks run in another order, so a stranger's mail is reported as the supplier's own address failing verification.
     'a sender at another organization that the mail server did not verify' => [
         ['evidence' => ['fromAddress' => 'x@attacker.example', 'fromVerified' => false]],
-        ['the sender x@attacker.example is not an address or a domain of Tai-Yuan Forge & Shaft in Odoo'],
+        ['the sender x@attacker.example is not at a mail domain of Tai-Yuan Forge & Shaft in Odoo'],
     ],
     'the message has no single sender address' => [
         ['evidence' => ['fromAddress' => null]],
         ['the message has no single sender address'],
     ],
-    // Bug: a supplier nobody gave an address in Odoo accepts every sender.
-    'the supplier has no address in Odoo' => [
-        ['facts' => ['supplierAddresses' => []]],
-        ['Tai-Yuan Forge & Shaft has no email address in Odoo to check the sender against'],
+    // Bug: a supplier nobody gave a mail domain in Odoo accepts every sender.
+    'the supplier has no mail domain in Odoo' => [
+        ['facts' => ['supplierDomains' => []]],
+        ['Tai-Yuan Forge & Shaft has no mail domain in Odoo to check the sender against'],
     ],
     'the message does not name the order' => [
         ['evidence' => ['subject' => 'Order confirmation']],
@@ -81,9 +81,12 @@ it('passes when the later message is about another order', function (): void {
     expect(SharedConditions::failures($case->write(), $case->lineFacts(), $case->evidence()))->toBe([]);
 });
 
-// Bug: every confirmation from a clerk who is not yet a contact in Odoo goes to Riku.
-it('passes when the sender is a verified address at the supplier\'s domain that Odoo does not hold', function (): void {
-    $case = RuleCase::confirmation()->with(evidence: ['fromAddress' => 'new.clerk@taiyuan.example']);
+// Bug: only the first of a supplier's mail domains counts, so mail from its other domain always goes to Riku.
+it('passes when the sender is a verified address at the supplier\'s second mail domain', function (): void {
+    $case = RuleCase::confirmation()->with(
+        facts: ['supplierDomains' => ['taiyuan.example', 'tyforge.example']],
+        evidence: ['fromAddress' => 'new.clerk@tyforge.example'],
+    );
 
     expect(SharedConditions::failures($case->write(), $case->lineFacts(), $case->evidence()))->toBe([]);
 });
