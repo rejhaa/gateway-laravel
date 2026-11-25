@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Processes\InboundPurchasing;
 
-use App\Evidence\SenderChecker;
 use App\Gateway\Actor;
 use App\Gateway\InputError;
 use App\Systems\Odoo\Exceptions\OdooException;
@@ -22,7 +21,10 @@ final class LineFactsReader
 
     private const LINE_FIELDS = ['order_id', 'product_id', 'product_qty', 'date_planned', 'date_promised', 'x_confirmed_qty', 'x_confirmed_date', 'move_dest_ids'];
 
-    public function __construct(private readonly OdooClient $odoo) {}
+    public function __construct(
+        private readonly OdooClient $odoo,
+        private readonly SupplierReader $suppliers,
+    ) {}
 
     /**
      * @throws InputError when the line does not exist
@@ -38,7 +40,7 @@ final class LineFactsReader
         $order = $this->odoo->read($actor, 'purchase.order', [self::id($line['order_id'])], ['name', 'partner_ref', 'partner_id', 'state'])[0];
         $product = $this->odoo->read($actor, 'product.product', [$productId], ['default_code', 'name', 'seller_ids'])[0];
         $supplierId = self::id($order['partner_id']);
-        $supplier = $supplierId === null ? ['name' => '', 'domains' => []] : $this->supplier($actor, $supplierId);
+        $supplier = $supplierId === null ? ['name' => '', 'domains' => []] : $this->suppliers->read($actor, $supplierId);
 
         return new LineFacts(
             lineId: $lineId,
@@ -58,28 +60,6 @@ final class LineFactsReader
             supplierName: $supplier['name'],
             supplierDomains: $supplier['domains'],
         );
-    }
-
-    /**
-     * The company the order's supplier belongs to, which is the supplier
-     * itself or the company of a contact person, with the mail domains a
-     * person entered for that company in x_mail_domains. The email addresses
-     * of the company and its contacts decide nothing, because an address at
-     * gmail.com would make every sender at gmail.com the supplier's.
-     *
-     * @return array{name: string, domains: list<string>}
-     */
-    private function supplier(Actor $actor, int $supplierId): array
-    {
-        $fields = ['name', 'commercial_partner_id', 'x_mail_domains'];
-        $partner = $this->odoo->read($actor, 'res.partner', [$supplierId], $fields)[0];
-        $companyId = self::id($partner['commercial_partner_id']) ?? $supplierId;
-        $company = $companyId === $supplierId ? $partner : $this->odoo->read($actor, 'res.partner', [$companyId], $fields)[0];
-
-        return [
-            'name' => (string) $company['name'],
-            'domains' => SenderChecker::domains(self::text($company['x_mail_domains']) ?? ''),
-        ];
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Processes\InboundPurchasing;
 
+use App\Evidence\SenderChecker;
 use App\Gateway\Actor;
 use App\Gateway\Decision;
 use App\Gateway\Facts;
@@ -13,6 +14,7 @@ use App\Gateway\ProposedWrite;
 use App\Models\Proposal;
 use App\Processes\InboundPurchasing\Rules\ConfirmationAsOrdered;
 use App\Processes\InboundPurchasing\Rules\PlannedDateUnderCap;
+use App\Systems\Mail\Message;
 use App\Systems\Odoo\OdooClient;
 use LogicException;
 
@@ -271,6 +273,30 @@ final class InboundPurchasing implements Process
     public function effect(Proposal $proposal): array
     {
         return (new Effect)->of($proposal);
+    }
+
+    /**
+     * The sender is marked when its address is not at a mail domain of the
+     * supplier the record is with. A proposal whose stored facts name no
+     * supplier, as a denied one's and one from an earlier version do, gets no
+     * mark.
+     */
+    public function senderMark(Proposal $proposal, Message $message): ?string
+    {
+        $facts = match (true) {
+            $proposal->facts === null => null,
+            $proposal->model === 'purchase.order.line' => LineFacts::fromArray($proposal->facts),
+            $proposal->model === 'account.move' => BillFacts::fromArray($proposal->facts),
+            default => null,
+        };
+
+        if ($facts === null || $facts->supplierName === '') {
+            return null;
+        }
+
+        return (new SenderChecker)->belongsTo($message->fromAddress ?? '', $facts->supplierDomains)
+            ? null
+            : "not at a mail domain of {$facts->supplierName}";
     }
 
     public function policyDocuments(): array

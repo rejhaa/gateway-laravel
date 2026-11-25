@@ -30,7 +30,7 @@ final class FileMailbox implements Mailbox
      * Part of every cache key. Raise it with any change to how a file is read
      * into a Message, so no message read the earlier way is served again.
      */
-    private const READING = 2;
+    private const READING = 3;
 
     public function __construct(
         private readonly string $directory,
@@ -74,7 +74,7 @@ final class FileMailbox implements Mailbox
 
         return new Message(
             id: Message::idFor($mail->getMessageId() ?? hash('sha256', $raw)),
-            from: $mail->getHeader(HeaderConsts::FROM)?->getDecodedValue() ?? '',
+            from: ($this->headers($mail, HeaderConsts::FROM)[0] ?? null)?->getDecodedValue() ?? '',
             to: $mail->getHeader(HeaderConsts::TO)?->getDecodedValue() ?? '',
             subject: $mail->getSubject() ?? '',
             date: $this->date($mail, $path),
@@ -92,7 +92,7 @@ final class FileMailbox implements Mailbox
      */
     private function fromAddress(IMessage $mail): ?string
     {
-        $headers = $mail->getAllHeadersByName(HeaderConsts::FROM);
+        $headers = $this->headers($mail, HeaderConsts::FROM);
         $addresses = count($headers) === 1 && $headers[0] instanceof AddressHeader ? $headers[0]->getAddresses() : [];
 
         if (count($addresses) !== 1) {
@@ -112,10 +112,26 @@ final class FileMailbox implements Mailbox
 
         $headers = array_map(
             fn (IHeader $header): string => $header->getRawValue(),
-            $mail->getAllHeadersByName('Authentication-Results'),
+            $this->headers($mail, 'Authentication-Results'),
         );
 
-        return AuthenticationResults::verifies(array_values($headers), $this->authservId, substr((string) strrchr($fromAddress, '@'), 1));
+        return AuthenticationResults::verifies($headers, $this->authservId, substr((string) strrchr($fromAddress, '@'), 1));
+    }
+
+    /**
+     * The headers with exactly this name, in any case. The parser's own
+     * lookup also returns a header whose name differs in punctuation, such
+     * as Authentication_Results or F-rom. A receiving server neither writes
+     * nor removes a header of such a name, so a sender could add one.
+     *
+     * @return list<IHeader>
+     */
+    private function headers(IMessage $mail, string $name): array
+    {
+        return array_values(array_filter(
+            $mail->getAllHeadersByName($name),
+            fn (IHeader $header): bool => strcasecmp($header->getName(), $name) === 0,
+        ));
     }
 
     private function date(IMessage $mail, string $path): CarbonImmutable

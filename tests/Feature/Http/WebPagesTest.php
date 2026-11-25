@@ -68,7 +68,8 @@ it('shows the sender\'s address after the name on the approval page', function (
     Livewire::actingAs(User::primary())
         ->test(Approvals::class)
         ->assertSeeInOrder(['Tai-Yuan Forge & Shaft', 'sales@taiyuan.example', 'Order confirmation P00104'])
-        ->assertDontSee('sender not verified');
+        ->assertDontSee('sender not verified')
+        ->assertDontSee('not at a mail domain');
 });
 
 // Bug: a forged sender looks like the supplier on a proposal whose reasons say nothing about the sender,
@@ -82,6 +83,20 @@ it('marks a sender the mail server did not verify on the approval page', functio
         ->test(Approvals::class)
         ->assertSee('You are asked because the rule tier is switched off.')
         ->assertSeeInOrder(['sales@taiyuan.example', 'sender not verified', 'Order confirmation P00104']);
+});
+
+// Bug: a verified sender at a lookalike of the supplier's domain looks like the supplier on a proposal whose reasons
+// say nothing about the sender, as with the rule tier off.
+it('marks a verified sender that is not at the supplier\'s mail domain on the approval page', function (): void {
+    config(['gateway.rule_tier' => false]);
+    Inbound::mailbox(Inbound::message(fromAddress: 'sales@taiyuan-forge.example'));
+    Inbound::service()->propose(Inbound::agent(), Inbound::input());
+
+    Livewire::actingAs(User::primary())
+        ->test(Approvals::class)
+        ->assertSee('You are asked because the rule tier is switched off.')
+        ->assertSeeInOrder(['sales@taiyuan-forge.example', 'not at a mail domain of Tai-Yuan Forge & Shaft', 'Order confirmation P00104'])
+        ->assertDontSee('sender not verified');
 });
 
 // Bug: a click on "Yes, do it" writes twice, or the block stays open as if nothing happened.

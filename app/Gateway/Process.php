@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Gateway;
 
 use App\Models\Proposal;
+use App\Systems\Mail\Message;
 use App\Systems\Odoo\Exceptions\OdooException;
 
 /**
@@ -95,4 +96,12 @@ interface Process
      * }
      */
     public function effect(Proposal $proposal): array;
+
+    /**
+     * What the screens say beside the sender of the message a proposal
+     * cites, when that sender is not the party the proposal's record is
+     * with, such as "not at a mail domain of Tai-Yuan Forge & Shaft". Null
+     * when there is nothing to say.
+     */
+    public function senderMark(Proposal $proposal, Message $message): ?string;
 }

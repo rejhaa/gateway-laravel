@@ -15,6 +15,8 @@ it('verifies the From domain only from a pass for that domain that the receiving
     'DMARC passes for a subdomain' => ['mx.vuoksi.example; dmarc=pass header.from=mail.taiyuan.example', false],
     'DKIM passes for the domain without a DMARC record' => ['mx.vuoksi.example; dkim=pass header.d=taiyuan.example header.s=k1; dmarc=none', true],
     'DKIM passes for the signing identity at the domain' => ['mx.vuoksi.example; dkim=pass header.i=@taiyuan.example', true],
+    'DKIM passes for a parent domain with the signing identity at the domain' => ['mx.vuoksi.example; dkim=pass header.d=example header.i=@taiyuan.example', false],
+    'DKIM passes for the sender\'s own domain with the signing identity at the domain' => ['mx.vuoksi.example; dkim=pass header.i=@taiyuan.example header.d=attacker.example', false],
     'DKIM passes for the sender\'s own domain' => ['mx.vuoksi.example; dkim=pass header.d=attacker.example; dmarc=none', false],
     'DKIM fails for the domain' => ['mx.vuoksi.example; dkim=fail header.d=taiyuan.example', false],
     'SPF passes for the domain' => ['mx.vuoksi.example; spf=pass (sender IP is 203.0.113.9) smtp.mailfrom=bounce@taiyuan.example', true],
@@ -26,6 +28,7 @@ it('verifies the From domain only from a pass for that domain that the receiving
     'no result' => ['mx.vuoksi.example; none', false],
     'a DMARC fail beside a DKIM pass for the domain' => ['mx.vuoksi.example; dkim=pass header.d=taiyuan.example; dmarc=fail header.from=taiyuan.example', false],
     'a property named twice' => ['mx.vuoksi.example; dkim=pass header.d=attacker.example header.d=taiyuan.example', false],
+    'a property named twice with the domain first' => ['mx.vuoksi.example; dkim=pass header.d=taiyuan.example header.d=attacker.example', false],
     'the server id followed by a word that is no version' => ['mx.vuoksi.example junk; dmarc=pass header.from=taiyuan.example', false],
     'the server id followed by a vertical tab' => ["mx.vuoksi.example\x0bjunk; dmarc=pass header.from=taiyuan.example", false],
     'a comment that never ends' => ['mx.vuoksi.example; dmarc=pass header.from=taiyuan.example (checked', false],
@@ -51,8 +54,16 @@ it('reads no result from the sender\'s text inside a quoted string or a comment'
         'mx.vuoksi.example; dmarc=none (policy (none; dmarc=pass header.from=taiyuan.example) applied) header.from=taiyuan.example',
         false,
     ],
+    'a result after a comment that closed inside a comment' => [
+        'mx.vuoksi.example; spf=pass (helo (x) ; dmarc=pass header.from=taiyuan.example ) smtp.mailfrom=attacker.example',
+        false,
+    ],
     'a result after an escaped parenthesis inside a comment' => [
         'mx.vuoksi.example; dmarc=none (helo a\); dmarc=pass header.from=taiyuan.example) header.from=taiyuan.example',
+        false,
+    ],
+    'a result after an escaped parenthesis inside the comment of another result' => [
+        'mx.vuoksi.example; spf=pass (helo a\); dmarc=pass header.from=taiyuan.example ) smtp.mailfrom=attacker.example',
         false,
     ],
     'a quoted local part at the domain' => [
@@ -70,4 +81,33 @@ it('reads the receiving server\'s header among the headers of other servers', fu
 
     expect(AuthenticationResults::verifies($headers, 'mx.vuoksi.example', 'taiyuan.example'))->toBeFalse()
         ->and(AuthenticationResults::verifies($headers, 'mx.attacker.example', 'taiyuan.example'))->toBeTrue();
+});
+
+// Catches a sender whose own envelope or signing address starts with the
+// supplier's domain and an equals sign passing SPF or DKIM as the supplier.
+// An address may hold an equals sign unquoted, so it must not end the value.
+it('reads an equals sign inside a value as part of the value', function (string $header, bool $verified): void {
+    expect(AuthenticationResults::verifies([$header], 'mx.vuoksi.example', 'taiyuan.example'))->toBe($verified);
+})->with([
+    'the domain before an equals sign in the envelope address' => [
+        'mx.vuoksi.example; spf=pass smtp.mailfrom=taiyuan.example=bounce@attacker.example; dkim=none; dmarc=none header.from=taiyuan.example',
+        false,
+    ],
+    'the same with spaces around the separator' => [
+        'mx.vuoksi.example; spf=pass smtp.mailfrom = taiyuan.example=bounce@attacker.example',
+        false,
+    ],
+    'the domain before an equals sign in the signing identity' => [
+        'mx.vuoksi.example; dkim=pass header.d=attacker.example header.i=taiyuan.example=x@attacker.example',
+        false,
+    ],
+    'an equals sign in the local part of an address at the domain' => [
+        'mx.vuoksi.example; spf=pass smtp.mailfrom=SRS0=x7f=4c=vuoksi.example=riku@taiyuan.example',
+        true,
+    ],
+]);
+
+// Catches a header with an empty server id being read as the receiving server's when no id is configured.
+it('verifies nothing for an empty server id', function (): void {
+    expect(AuthenticationResults::verifies(['""; dmarc=pass header.from=taiyuan.example'], '', 'taiyuan.example'))->toBeFalse();
 });

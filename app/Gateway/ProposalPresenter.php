@@ -91,7 +91,7 @@ final class ProposalPresenter
      *
      * @param  Collection<int, Proposal>  $proposals
      * @return list<array{
-     *     message: array{id: string, from: string|null, sender: string|null, address: string|null, verified: bool|null, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>},
+     *     message: array{id: string, from: string|null, sender: string|null, address: string|null, verified: bool|null, marks: list<string>, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>},
      *     proposals: Collection<int, Proposal>,
      * }>
      */
@@ -109,7 +109,7 @@ final class ProposalPresenter
             ])
             ->map(fn (Collection $group, int|string $id): array => [
                 // An id of digits alone comes back from groupBy as an integer key.
-                'message' => self::message((string) $id, $messages->get($id)),
+                'message' => self::message((string) $id, $messages->get($id), $this->senderMarks($group, $messages->get($id))),
                 'proposals' => $group->values(),
             ])
             ->values()
@@ -259,12 +259,13 @@ final class ProposalPresenter
     /**
      * The day is short, for the card ("5 Nov"). The time is absolute, for the
      * web page ("5 Nov 2026, 11:12"). The sender is the display name, which
-     * the sender chose, so the screens show the address beside it and say
-     * when the mail server did not verify it.
+     * the sender chose, so the screens show the address beside it, followed
+     * by the marks.
      *
-     * @return array{id: string, from: string|null, sender: string|null, address: string|null, verified: bool|null, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>}
+     * @param  list<string>  $marks  what senderMarks() returned
+     * @return array{id: string, from: string|null, sender: string|null, address: string|null, verified: bool|null, marks: list<string>, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>}
      */
-    private static function message(string $id, ?Message $message): array
+    private static function message(string $id, ?Message $message, array $marks): array
     {
         $date = $message?->date->setTimezone((string) config('gateway.timezone'));
 
@@ -274,6 +275,7 @@ final class ProposalPresenter
             'sender' => $message === null ? null : self::sender($message),
             'address' => $message?->fromAddress,
             'verified' => $message?->fromVerified,
+            'marks' => $marks,
             'subject' => $message?->subject,
             'date' => $date?->toIso8601String(),
             'day' => $date?->format('j M'),
@@ -281,6 +283,31 @@ final class ProposalPresenter
             'body' => $message?->body,
             'attachments' => $message === null ? [] : array_map(fn (Attachment $attachment): string => $attachment->name, $message->attachments),
         ];
+    }
+
+    /**
+     * What the screens warn about a message's sender, on every proposal that
+     * cites it and whatever its reasons are. A sender the mail server did not
+     * verify is marked, and each proposal's process adds what it has to say
+     * about the sender, such as that the address is not at a mail domain of
+     * the order's supplier.
+     *
+     * @param  Collection<int, Proposal>  $proposals  the proposals that cite the message
+     * @return list<string>
+     */
+    private function senderMarks(Collection $proposals, ?Message $message): array
+    {
+        if ($message === null) {
+            return [];
+        }
+
+        $marks = $message->fromVerified ? [] : ['sender not verified'];
+
+        foreach ($proposals as $proposal) {
+            $marks[] = $this->processes->named($proposal->process)->senderMark($proposal, $message);
+        }
+
+        return array_values(array_unique(array_filter($marks)));
     }
 
     /**

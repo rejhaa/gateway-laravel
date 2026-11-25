@@ -74,10 +74,10 @@ A rule applies a write only when the cited message comes from the order's suppli
 | The sender's address is at one of the supplier's mail domains | "the sender {address} is not at a mail domain of {supplier} in Odoo" |
 | The mail server verified the sender | "the mail server did not verify that the message comes from {address}" |
 
-- The supplier is the company the order's `partner_id` belongs to, which is its `commercial_partner_id`. Its mail domains are the domains a person entered in the company's Mail domains field in Odoo (`x_mail_domains`), separated by commas.
+- The supplier is the company the order's `partner_id` belongs to, which is its `commercial_partner_id`. Its mail domains are the domains a person entered in the company's Mail domains field in Odoo (`x_mail_domains`), separated by commas or spaces.
 - The sender has to be at one of those domains. A subdomain is a different domain. The email addresses Odoo holds for the supplier and its contacts decide nothing, so a supplier that mails from an address at a mail provider such as `gmail.com` has no mail domain, and its messages wait for Riku.
 - The sender writes the From header, so the address alone proves nothing. The sender is verified when the receiving mail server recorded that DMARC passed for the address's domain, or that DKIM or SPF passed for that same domain. A DKIM or SPF pass for another domain does not count, because every sender passes both for a domain of their own. A DMARC fail for the address's domain means the sender is not verified, whatever else the server recorded.
-- The name shown in a From header is the sender's choice and decides nothing. The approval screens show the address after the name, and mark a sender the mail server did not verify with "sender not verified" on every proposal, whatever its reasons.
+- The name shown in a From header is the sender's choice and decides nothing. The approval screens show the address after the name. On every proposal, whatever its reasons, they mark a sender the mail server did not verify with "sender not verified", and a sender whose address is not at a mail domain of the supplier with "not at a mail domain of {supplier}".
 
 A forwarder is not the supplier, and neither is a colleague who forwards a supplier's document. A change proposed from such a message waits for Riku, however small it is.
 
@@ -117,7 +117,7 @@ The gateway reads these as Riku and never takes them from the agent:
 - The order's `name`, `partner_ref`, `partner_id` and `state`.
 - The product's names, as listed under the shared conditions.
 - The waiting manufacturing orders, through the `stock.move` records in `move_dest_ids` and their `raw_material_production_id`, with each `mrp.production`'s `name` and `date_start` and the move's `product_uom_qty` as its need.
-- The supplier's company and its email addresses, as listed under "Who sent the message".
+- The supplier's company and its mail domains, as listed under "Who sent the message".
 - The cited message's date and sender, whether the mail server verified the sender, and every message newer than it that names the order.
 
 ## When Riku decides

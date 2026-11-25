@@ -12,6 +12,11 @@ use LogicException;
  */
 final readonly class BillFacts implements Facts
 {
+    /**
+     * @param  string  $supplier  the bill's partner as Odoo names it
+     * @param  string  $supplierName  the company that partner belongs to
+     * @param  list<string>  $supplierDomains  the mail domains Odoo holds for that company, in lowercase
+     */
     public function __construct(
         public int $billId,
         public string $name,
@@ -22,14 +27,19 @@ final readonly class BillFacts implements Facts
         public string $currency,
         public ?string $dispute,
         public ?string $disputeNote,
+        public string $supplierName = '',
+        public array $supplierDomains = [],
     ) {}
 
     /**
+     * A stored fact this version does not hold is left out, so a proposal
+     * that an earlier version stored still loads.
+     *
      * @param  array<string, mixed>  $stored  what toArray() returned
      */
     public static function fromArray(array $stored): self
     {
-        return new self(...$stored);
+        return new self(...array_filter($stored, fn (string $fact): bool => property_exists(self::class, $fact), ARRAY_FILTER_USE_KEY));
     }
 
     /** "Posted vendor bill TYF-INV-2211 from Tai-Yuan Forge & Shaft, 4,800.00 EUR untaxed" */

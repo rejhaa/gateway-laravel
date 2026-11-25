@@ -123,6 +123,7 @@ app/
       LineFactsReader.php       reads LineFacts from Odoo
       BillFacts.php             what the gateway reads about a vendor bill
       BillFactsReader.php       reads BillFacts from Odoo
+      SupplierReader.php        reads the supplier's company and mail domains for both
       SharedConditions.php      the conditions both rules share
       Rules/ConfirmationAsOrdered.php
       Rules/PlannedDateUnderCap.php
@@ -206,6 +207,9 @@ interface Process
 
     /** The middle of the proposal's block on the screens (section 8). */
     public function effect(Proposal $proposal): array;
+
+    /** What the screens say beside a cited message's sender when it is not the party the record is with, or null. */
+    public function senderMark(Proposal $proposal, Message $message): ?string;
 }
 
 interface Rule
@@ -443,11 +447,11 @@ No rule applies. The reason is "a dispute on a vendor bill is decided by a perso
 
 - The line: `order_id`, `product_id`, `product_qty`, `date_planned`, `date_promised`, `x_confirmed_qty`, `x_confirmed_date`, `move_dest_ids`.
 - The order: `name`, `partner_ref`, `partner_id`, `state`.
-- The supplier: the `commercial_partner_id` of the order's `partner_id`, which is the company, with that company's `name` and `x_mail_domains`. A person fills that text field with the domains the company sends mail from, and `SenderChecker::domains()` reads it into a list. The email addresses of the company and its contacts are not read.
+- The supplier: the `commercial_partner_id` of the order's `partner_id`, which is the company, with that company's `name` and `x_mail_domains`. A person fills that text field with the domains the company sends mail from, and `SenderChecker::domains()` reads it into a list. The email addresses of the company and its contacts are not read. `SupplierReader` reads the supplier, for a line and for a bill.
 - The product's names: `default_code` and `name` on `product.product`, and `product_code` and `product_name` on the `product.supplierinfo` rows in its `seller_ids` that belong to the order's supplier and to this product or its template.
 - Waiting manufacturing orders: the `stock.move` records in `move_dest_ids`, their `raw_material_production_id`, and each `mrp.production` with `name`, `date_start` and the sum of its moves' `product_uom_qty` as its need.
 
-`BillFactsReader` reads a vendor bill's `name`, `ref`, `state`, `partner_id`, `amount_untaxed`, `currency_id`, `x_dispute` and `x_dispute_note`.
+`BillFactsReader` reads a vendor bill's `name`, `ref`, `state`, `partner_id`, `amount_untaxed`, `currency_id`, `x_dispute` and `x_dispute_note`, and the supplier behind its `partner_id` as for a line. No rule reads a bill's supplier. The screens use it to mark the sender.
 
 The core reads the mailbox facts into `Evidence`: the cited message, and every message newer than it. The shared conditions decide which of them name the order, so the facts stay what Odoo holds and the stale check compares nothing else.
 
@@ -484,18 +488,18 @@ The check answers two separate questions. Odoo answers whose domain the address 
 **Really from it.** The sender writes the From header, so its text proves nothing. The receiving mail server checks SPF, DKIM and DMARC when the message arrives and records the outcome in an `Authentication-Results` header (RFC 8601). `AuthenticationResults::verifies($headers, $authservId, $fromDomain)` is true when a header written by the receiving server holds one of these results:
 
 - `dmarc=pass` with `header.from` equal to the From domain.
-- `dkim=pass` with `header.d`, or the domain of `header.i`, equal to the From domain.
+- `dkim=pass` with `header.d` equal to the From domain, or with the domain of `header.i` equal to it when the result has no `header.d`.
 - `spf=pass` with the domain of `smtp.mailfrom` equal to the From domain.
 
-A DKIM or SPF pass for another domain does not count, because every sender passes both for a domain of their own. The second and third results cover a supplier whose domain has no DMARC record. A `dmarc=fail` for the From domain makes the sender unverified whatever else the header holds, because an aligned DKIM or SPF pass cannot stand beside a real DMARC fail.
+A DKIM or SPF pass for another domain does not count, because every sender passes both for a domain of their own. A DKIM result's signing domain is `header.d`. The signing identity `header.i` may be at a subdomain of it, which the holder of the signing key need not speak for, so it counts only for a server that writes no `header.d`. The second and third results cover a supplier whose domain has no DMARC record. A `dmarc=fail` for the From domain makes the sender unverified whatever else the header holds, because an aligned DKIM or SPF pass cannot stand beside a real DMARC fail.
 
 A header counts only when its first part is the receiving server's id, `gateway.mailbox.authserv_id`, alone or followed by a version number, because a sender can add a header of that name. This relies on the receiving server removing an incoming header that carries its id, which section 5 of the RFC requires.
 
-The header also holds text the sender chose, such as the envelope address in `smtp.mailfrom`. The class therefore reads the header token by token as the RFC defines it. A semicolon or an equals sign inside a quoted string or a comment separates nothing, a comment may hold another comment, and a backslash escapes the next character. A header whose comment or quoted string never ends gives no result, and a property named twice in one result has no value. This relies on the receiving server quoting any copied text that holds a separator, as the RFC's grammar requires. A server that copies such text unquoted writes a header no reader can tell from a genuine result.
+The header also holds text the sender chose, such as the envelope address in `smtp.mailfrom`. The class therefore reads the header token by token as the RFC defines it. A semicolon or an equals sign inside a quoted string or a comment separates nothing, a comment may hold another comment, and a backslash escapes the next character. An equals sign separates a method or a property name from its value, and the value then runs to the next white space, semicolon or comment. The grammar lets an address hold an equals sign unquoted, so the envelope address `taiyuan.example=bounce@attacker.example` is one value at `attacker.example`, and its start is not a pass for `taiyuan.example`. A header whose comment or quoted string never ends gives no result, and a property named twice in one result has no value. This relies on the receiving server quoting any copied text that holds a semicolon or white space, as the RFC's grammar requires. A server that copies such text unquoted writes a header no reader can tell from a genuine result.
 
 The gateway does not verify DKIM itself. A signing key is rotated and then old mail no longer verifies, and SPF needs the address of the connecting server, which only the receiving server saw.
 
-`FileMailbox` sets `fromAddress` to the one address of the one From header, in lowercase. A message with several From headers, or several addresses in one, has no sender address, because nobody can say which one the receiving server checked. The display name is the sender's choice and is never compared.
+`FileMailbox` sets `fromAddress` to the one address of the one From header, in lowercase. A message with several From headers, or several addresses in one, has no sender address, because nobody can say which one the receiving server checked. The display name is the sender's choice and is never compared. It takes the From and `Authentication-Results` headers by their exact names, in any case. The mail parser's own lookup also returns a header whose name differs in punctuation, such as `Authentication_Results` or `F-rom`, and a receiving server neither writes nor removes a header of such a name.
 
 A forwarder is not the supplier, and neither is a colleague who forwards a supplier's document, so a change proposed from such a message waits for Riku. The original sender inside a forwarded message is text anyone can type. POL-1 allows a rule to record a forwarder's notice, and this version does not use that allowance.
 
@@ -618,7 +622,7 @@ The heading "If you say yes, Odoo changes this" and the reason field with the bu
 `App\Gateway\ProposalPresenter` holds every other word of the screens, so the card's JSON, the Blade component and the web pages share one source:
 
 - `block(Proposal)` is one block as data: `id`, `title`, `summary`, `status`, `tier`, `because` ("You are asked because {reasons joined with "; "}." on a human-tier proposal, otherwise null), `reasons`, `effect`, `quote` (`text`, `source`, `document` with the body named "the mail body", `location`, `status`, and `check`, "found in the document", "not checked, the document has no text layer", or null when the quote was never checked, as on a denied proposal), `line` (the collapsed line below, null while pending), and `rule`, `policy_section`, `decided_by`, `decided_via`, `decided_at` (ISO 8601), `decision_reason` and `error`.
-- `byMessage(proposals)` groups proposals by the message they cite, oldest message first, and `groups(proposals)` does the same with blocks. Both take `newestFirst`, which the history sets. A group's `message` has `id`, `from`, `sender` (the display name, or the address when the header has no name or a name written as an address), `address` (the message's `fromAddress`), `verified` (its `fromVerified`), `subject`, `date` (ISO 8601), `day` ("5 Nov"), `time` ("5 Nov 2026, 11:12"), `body` and `attachments` (the names). A message no longer in the mailbox comes last with only its id. A group also has `pending`, the count of its pending proposals.
+- `byMessage(proposals)` groups proposals by the message they cite, oldest message first, and `groups(proposals)` does the same with blocks. Both take `newestFirst`, which the history sets. A group's `message` has `id`, `from`, `sender` (the display name, or the address when the header has no name or a name written as an address), `address` (the message's `fromAddress`), `verified` (its `fromVerified`), `marks` (the warnings about the sender, described under "The card"), `subject`, `date` (ISO 8601), `day` ("5 Nov"), `time` ("5 Nov 2026, 11:12"), `body` and `attachments` (the names). A message no longer in the mailbox comes last with only its id. A group also has `pending`, the count of its pending proposals.
 - `line(Proposal)`, `outcome(Proposal)` (the sentence the card gives the agent after a decision), `heading(n)` and `waitingNote(n)` (the note `list_proposals` gives the agent).
 - `appliedByRule()` is the list under "Applied by rule ({n})": every applied rule-tier proposal with `id`, `title` and `rule`.
 - `odooTrouble(OdooException)` is the sentence a screen shows when Odoo failed in a way the service did not settle: the exception's message and "Try again in a moment."
@@ -676,7 +680,7 @@ Saigon Grip Works · Packing list, your order P00101 · 3 Nov 2026, 08:40
 ```
 
 - The heading counts what waits: "{n} decisions wait for you", "1 decision waits for you", or "Nothing waits for you".
-- Each group starts with sender, address, subject and the message's `time`. The sender chose the name, so the address follows it in muted text, and it is left out when the name is the address. A sender the mail server did not verify gets "sender not verified" in the warning colour after the address. The mark is there on every proposal, because the sender's phrase is among the reasons only when a rule was tried, and a bill dispute or a proposal made with the rule tier off has other reasons. The fold "The mail" shows the body and the attachment names.
+- Each group starts with sender, address, subject and the message's `time`. The sender chose the name, so the address follows it in muted text, and it is left out when the name is the address. The marks follow the address in the warning colour, joined by commas. A sender the mail server did not verify gets "sender not verified". A sender whose address is not at a mail domain of the supplier of a proposal's record gets "not at a mail domain of {supplier}", which `Process::senderMark()` returns from the proposal's stored facts, for a line and for a bill. A proposal whose stored facts name no supplier adds no mark. The marks are there on every proposal, because the sender's phrase is among the reasons only when a rule was tried, and a bill dispute or a proposal made with the rule tier off has other reasons. The fold "The mail" shows the body and the attachment names.
 - "Yes to all {n}" appears on a group with more than one pending proposal. It sends one decision per proposal, and each gets its own audit rows.
 - "No" stays disabled until the reason field has text. While a decision is sent the pressed button reads "Recording".
 - "Applied by rule ({n})" lists one line per change, its title and rule name.
@@ -699,7 +703,7 @@ Outside a host, such as a page opened on its own, the card has no bridge. It sti
   "waiting": 2,
   "groups": [
     {
-      "message": {"id": "…", "from": "…", "sender": "…", "address": "…", "verified": true, "subject": "…", "date": "2026-11-05T11:12:00+02:00", "day": "5 Nov", "body": "…", "attachments": ["TYF-OC-26-0918.pdf"]},
+      "message": {"id": "…", "from": "…", "sender": "…", "address": "…", "verified": true, "marks": [], "subject": "…", "date": "2026-11-05T11:12:00+02:00", "day": "5 Nov", "body": "…", "attachments": ["TYF-OC-26-0918.pdf"]},
       "pending": 2,
       "proposals": [{"id": 12, "title": "…", "summary": "…", "status": "pending", "tier": "human", "because": "…", "reasons": ["…"], "effect": {…}, "quote": {…}, "line": null, "rule": null, "policy_section": null, "decided_by": null, "decided_via": null, "decided_at": null, "decision_reason": null, "error": null}]
     }
@@ -899,16 +903,22 @@ One dataset per rule. Each row starts from a `LineFacts` that passes and changes
 | the field's domains are read in lowercase, with or without an @, across commas and line breaks, and an empty field gives none | a domain a person wrote differently does not count, or an empty field counts as a domain |
 | a whole address in the field takes no sender | an address in the field opens its domain, or every domain, to all senders |
 | a DMARC pass, or a DKIM or SPF pass, counts only for the From domain | a sender who passes for a domain of their own forges the supplier's address |
+| a DKIM pass for another signing domain does not count, whatever its signing identity says | the holder of a parent domain's key, or a sender who signs with their own domain, passes as the supplier |
 | a header from another server, a longer server id and a server id followed by anything but a version do not count | a header the sender added is read as the receiving server's |
-| a result inside a quoted string or a comment is not read, also after an escaped quote or parenthesis and inside a nested comment | a sender forges a pass with text the receiving server copied into its header |
-| a DMARC fail beside a DKIM pass for the domain, a property named twice and an unfinished comment or quoted string verify nothing | a contradictory or malformed header verifies a sender |
+| a result inside a quoted string or a comment is not read, also after an escaped quote or parenthesis, inside a nested comment and after a comment that closed inside a comment | a sender forges a pass with text the receiving server copied into its header |
+| an equals sign inside a value belongs to the value, with or without spaces around the separator | a sender whose envelope or signing address starts with the supplier's domain and an equals sign passes SPF or DKIM as the supplier |
+| a DMARC fail beside a DKIM pass for the domain, a property named twice in either order and an unfinished comment or quoted string verify nothing | a contradictory or malformed header verifies a sender |
 | a sender at another organization that is also unverified gets the organization phrase alone (`SharedConditionsTest`) | the checks run in another order |
 | the sender is the one From address, and two addresses or two From headers give none | the supplier's address in a display name or in a second address counts as the sender |
-| no server id configured verifies no sender | a header from any server verifies a sender |
+| a header named `Authentication_Results` verifies nothing, a header named `F-rom` is no From header, and a message with only `F-rom` has no sender | a header the sender added under a similar name is read as the receiving server's, stands in for the sender, or breaks the mailbox |
+| a mail file reaches a rule write only with a pass for the supplier's domain, and not with an envelope address that starts with that domain or a DKIM pass for another domain | the reader and the conditions each pass their own tests while a forged file gets a rule write |
+| no server id or an empty one verifies no sender, in the mailbox and in the reader | a header from any server, or one with an empty id, verifies a sender |
 | a changed server id reads a cached message again | a sender verified under the old id stays verified |
 | the supplier's mail domains are those of its company, and neither a contact's field nor a contact's address adds one (`LineFactsReaderTest`) | an order on a contact person has no mail domains, or a contact's `gmail.com` address counts |
 | the approval page shows the address after the name (`WebPagesTest`) | Riku sees only the name the sender chose |
 | the approval page marks an unverified sender with the rule tier off (`WebPagesTest`) | a forged sender looks like the supplier where the reasons say nothing about the sender |
+| the approval page marks a verified sender outside the supplier's mail domains with the rule tier off, and the card gets the mark on a bill dispute (`WebPagesTest`, `CardTest`) | a lookalike of the supplier's domain looks like the supplier where the reasons say nothing about the sender |
+| a bill's facts hold the company and the mail domains of its supplier, and none for a bill with no partner (`BillFactsReaderTest`) | a bill on a contact person has no supplier to compare the sender with, or a bill with no partner fails to load |
 | the card gets the real address for a name written as an address, and `verified` false (`CardTest`) | a display name stands in for the address, or the card cannot mark a forged sender |
 | an empty field gives no mail domain (`LineFactsReaderTest`) | the false Odoo returns for an empty field is read as a domain |
 
@@ -1048,7 +1058,7 @@ The agent runs above were made before the sender condition existed, and the two 
 
 | Message | Sender | Outcome |
 |---|---|---|
-| Confirmation of P00111 | `kevin.huang@taiyuan-forge.example`, an address Odoo does not hold at one of Tai-Yuan's mail domains, verified | applied by `confirmation-as-ordered` |
+| Confirmation of P00111 | `kevin.huang@taiyuan-forge.example`, verified. Odoo holds no contact with this address, and its domain is one of Tai-Yuan's mail domains | applied by `confirmation-as-ordered` |
 | Revised confirmation of P00112, 10 days later | `orders@taiyuan-forge.example`, with SPF and DMARC failed | held: "the mail server did not verify that the message comes from orders@taiyuan-forge.example" |
 | Confirmation of P00113 | `export@saigon-grip.example`, verified for that domain | held: "the sender export@saigon-grip.example is not at a mail domain of Saigon Grip Works Co., Ltd. in Odoo" |
 

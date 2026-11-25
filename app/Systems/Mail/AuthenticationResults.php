@@ -15,8 +15,10 @@ namespace App\Systems\Mail;
  *
  * The header also holds text the sender chose, such as the envelope address
  * in smtp.mailfrom. The server writes such text inside a quoted string or a
- * comment when it holds a separator, so the header is read token by token and
- * nothing inside a quoted string or a comment starts a result.
+ * comment when it holds a semicolon or white space, so the header is read
+ * token by token and nothing inside a quoted string or a comment starts a
+ * result. An address may hold an equals sign unquoted, so the value after a
+ * name's equals sign runs to the next white space, semicolon or comment.
  */
 final class AuthenticationResults
 {
@@ -28,13 +30,20 @@ final class AuthenticationResults
      *
      * A DMARC pass for that domain says so. Without one, a DKIM or an SPF pass
      * says so only when it names that same domain, because every sender passes
-     * both for a domain of their own. A DMARC fail for the domain settles it
-     * the other way, whatever else the headers hold.
+     * both for a domain of their own. A DKIM pass names its signing domain,
+     * header.d, and the domain of the signing identity header.i only when the
+     * server wrote no header.d, because the identity may be at a subdomain
+     * that the holder of the signing key does not speak for. A DMARC fail for
+     * the domain settles it the other way, whatever else the headers hold.
      *
      * @param  list<string>  $headers  the raw value of each Authentication-Results header
      */
     public static function verifies(array $headers, string $authservId, string $fromDomain): bool
     {
+        if ($authservId === '') {
+            return false;
+        }
+
         $fromDomain = strtolower($fromDomain);
         $passed = false;
 
@@ -42,7 +51,7 @@ final class AuthenticationResults
             foreach (self::results($header, $authservId) as $result) {
                 $domains = array_map(self::domain(...), match ($result['method']) {
                     'dmarc' => [$result['properties']['header.from'] ?? null],
-                    'dkim' => [$result['properties']['header.d'] ?? null, $result['properties']['header.i'] ?? null],
+                    'dkim' => [$result['properties']['header.d'] ?? $result['properties']['header.i'] ?? null],
                     'spf' => [$result['properties']['smtp.mailfrom'] ?? null],
                     default => [],
                 });
@@ -135,8 +144,10 @@ final class AuthenticationResults
 
     /**
      * The header's tokens in lowercase, split at each semicolon that stands
-     * outside a quoted string and a comment. A header with a comment or a
-     * quoted string that never ends has no segments.
+     * outside a quoted string and a comment. An equals sign separates a name
+     * from its value, and one inside the value belongs to the value, as in
+     * the envelope address `a=b@attacker.example`. A header with a comment or
+     * a quoted string that never ends has no segments.
      *
      * @return list<list<array{0: string, 1: string}>> each token as its type (word or =) and its text
      */
@@ -144,12 +155,14 @@ final class AuthenticationResults
     {
         $segments = [[]];
         $word = null;
+        $inValue = false;
         $length = strlen($header);
 
-        $endWord = function () use (&$segments, &$word): void {
+        $endWord = function () use (&$segments, &$word, &$inValue): void {
             if ($word !== null) {
                 $segments[array_key_last($segments)][] = [self::WORD, strtolower($word)];
                 $word = null;
+                $inValue = false;
             }
         };
 
@@ -193,9 +206,11 @@ final class AuthenticationResults
             } elseif ($char === ';') {
                 $endWord();
                 $segments[] = [];
-            } elseif ($char === '=') {
+                $inValue = false;
+            } elseif ($char === '=' && ! $inValue) {
                 $endWord();
                 $segments[array_key_last($segments)][] = ['=', '='];
+                $inValue = true;
             } elseif ($char === ' ' || $char === "\t" || $char === "\r" || $char === "\n") {
                 $endWord();
             } else {

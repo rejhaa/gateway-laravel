@@ -173,7 +173,26 @@ it('gives the card the real address and says that the mail server did not verify
         ->assertOk()
         ->assertJsonPath('groups.0.message.sender', 'x@attacker.example')
         ->assertJsonPath('groups.0.message.address', 'x@attacker.example')
-        ->assertJsonPath('groups.0.message.verified', false);
+        ->assertJsonPath('groups.0.message.verified', false)
+        ->assertJsonPath('groups.0.message.marks', ['sender not verified']);
+});
+
+// Bug: a bill dispute cites a mail from a lookalike of the supplier's domain and the card shows the sender with no
+// mark, because a dispute's reason never names the sender.
+it('gives the card a mark for a sender outside the supplier\'s mail domains on a bill dispute', function (): void {
+    $this->odoo->bill();
+    Inbound::mailbox(Inbound::message(subject: 'Invoice TYF-INV-2211', body: 'We invoice 120 heads, TYF-INV-2211.', fromAddress: 'billing@taiyuan-forge.example'));
+    Inbound::service()->propose(Inbound::agent(), Inbound::input([
+        'model' => 'account.move',
+        'record_id' => FakeOdoo::BILL,
+        'values' => ['x_dispute' => 'disputed', 'x_dispute_note' => 'Only 100 of the 120 heads arrived.'],
+        'quote' => 'We invoice 120 heads',
+    ]));
+
+    $this->getJson('/card/proposals', cardHeaders())
+        ->assertOk()
+        ->assertJsonPath('groups.0.message.verified', true)
+        ->assertJsonPath('groups.0.message.marks', ['not at a mail domain of Tai-Yuan Forge & Shaft']);
 });
 
 // Bug: the card misses what waits, or groups it under the wrong mail.
@@ -193,6 +212,7 @@ it('lists what waits grouped by mail, and what rules applied', function (): void
         ->assertJsonPath('groups.0.message.sender', 'Tai-Yuan Forge & Shaft')
         ->assertJsonPath('groups.0.message.address', 'sales@taiyuan.example')
         ->assertJsonPath('groups.0.message.verified', true)
+        ->assertJsonPath('groups.0.message.marks', [])
         ->assertJsonPath('groups.0.message.day', '5 Nov')
         ->assertJsonPath('groups.0.pending', 1)
         ->assertJsonPath('groups.0.proposals.0.id', $pending->id)
