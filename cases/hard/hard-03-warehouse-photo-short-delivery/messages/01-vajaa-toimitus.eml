@@ -1,3 +1,6 @@
+Authentication-Results: mx.vuoksigolf.example; spf=pass
+ smtp.mailfrom=vuoksigolf.fi; dkim=pass header.d=vuoksigolf.fi; dmarc=pass
+ header.from=vuoksigolf.fi
 From: Pekka =?utf-8?q?Hyv=C3=B6nen?= <pekka.hyvonen@vuoksigolf.fi>
 To: Vuoksi Golf purchasing <purchasing@vuoksigolf.fi>
 Cc: Riku Lindgren <riku.lindgren@vuoksigolf.fi>

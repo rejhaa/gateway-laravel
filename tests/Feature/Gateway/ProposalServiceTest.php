@@ -69,6 +69,20 @@ describe('propose', function (): void {
             ->and($result->proposal->quote_location)->toBe('l5');
     });
 
+    // Bug: a forged supplier address still gets a rule write, because the sender never reaches the conditions.
+    it('holds a write whose message the mail server did not verify as the supplier\'s', function (): void {
+        $odoo = FakeOdoo::start()->line();
+        Inbound::mailbox(Inbound::message(fromVerified: false));
+
+        $result = Inbound::service()->propose(Inbound::agent(), Inbound::input());
+
+        expect($result->toArray())->toMatchArray([
+            'status' => 'pending',
+            'tier' => 'human',
+            'decision' => 'This waits for Riku, because the mail server did not verify that the message comes from sales@taiyuan.example.',
+        ])->and($odoo->writes)->toBe([]);
+    });
+
     // Bug: the switch does nothing.
     it('sends a passing write to Riku when the rule tier is off, with that reason alone', function (): void {
         config(['gateway.rule_tier' => false]);

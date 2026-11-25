@@ -1,3 +1,6 @@
+Authentication-Results: mx.vuoksigolf.example; spf=pass
+ smtp.mailfrom=saigongrip.com.vn; dkim=pass header.d=saigongrip.com.vn;
+ dmarc=pass header.from=saigongrip.com.vn
 From: Linh Tran <linh.tran@saigongrip.com.vn>
 To: Vuoksi Golf purchasing <purchasing@vuoksigolf.fi>
 Cc: Riku Lindgren <riku.lindgren@vuoksigolf.fi>

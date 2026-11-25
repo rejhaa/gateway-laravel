@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Http;
  * Tests change $records directly to play someone editing Odoo.
  *
  * line() builds the records one purchase order line needs. They are the
- * confirmed order P00104, its product, and the line itself, 120 ordered and
+ * confirmed order P00104, its supplier, its product, and the line itself, 120 ordered and
  * planned for 2026-11-30 at 10:00 UTC, which is the requested date too.
  */
 final class FakeOdoo
@@ -76,6 +76,8 @@ final class FakeOdoo
             ...$order,
         ];
 
+        $this->supplier();
+
         $this->records['product.product'][self::PRODUCT] = [
             'default_code' => 'VG-HEAD-V1',
             'name' => 'V1 forged iron head',
@@ -97,6 +99,16 @@ final class FakeOdoo
         return $this;
     }
 
+    /** The supplier of the standard order and the standard bill, a company with one mail domain. */
+    private function supplier(): void
+    {
+        $this->records['res.partner'][self::SUPPLIER] ??= [
+            'name' => 'Tai-Yuan Forge & Shaft',
+            'commercial_partner_id' => [self::SUPPLIER, 'Tai-Yuan Forge & Shaft'],
+            'x_mail_domains' => 'taiyuan.example',
+        ];
+    }
+
     /** A manufacturing order that consumes the line's goods through one stock move. */
     public function waitingOrder(int $moveId, int $productionId, string $name, string $start, float $need): self
     {
@@ -113,6 +125,8 @@ final class FakeOdoo
     /** A posted vendor bill with no dispute. */
     public function bill(): self
     {
+        $this->supplier();
+
         $this->records['account.move'][self::BILL] = [
             'name' => 'BILL/2026/11/0007',
             'ref' => 'TYF-INV-2211',

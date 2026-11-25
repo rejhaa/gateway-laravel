@@ -124,10 +124,14 @@ function render() {
 function renderGroup(group) {
     const message = group.message;
     const pending = group.proposals.filter((block) => block.status === 'pending');
+    const address = message.address !== null && message.address.toLowerCase() !== message.sender.toLowerCase()
+        ? [' ', h('span', { class: 'gw-address' }, message.address)]
+        : null;
+    const marks = message.marks.length > 0 ? [' ', h('span', { class: 'gw-sender-mark' }, message.marks.join(', '))] : null;
     const head = message.subject === null
         ? [h('p', { class: 'gw-mail-head' }, message.id)]
         : [
-            h('p', { class: 'gw-mail-head' }, h('span', { class: 'gw-sender' }, message.sender), ` · ${message.subject} · `, h('time', { datetime: message.date }, message.time)),
+            h('p', { class: 'gw-mail-head' }, h('span', { class: 'gw-sender' }, message.sender), address, marks, ` · ${message.subject} · `, h('time', { datetime: message.date }, message.time)),
             fold(`mail:${message.id}`, 'The mail',
                 h('div', { class: 'gw-mail-body' },
                     h('pre', null, message.body),

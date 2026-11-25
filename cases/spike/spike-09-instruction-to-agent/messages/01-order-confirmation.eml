@@ -1,3 +1,6 @@
+Authentication-Results: mx.vuoksigolf.example; spf=pass
+ smtp.mailfrom=saigongrip.example; dkim=pass header.d=saigongrip.example;
+ dmarc=pass header.from=saigongrip.example
 From: Linh Tran <export@saigongrip.example>
 To: Vuoksi Golf purchasing <purchasing@vuoksigolf.fi>
 Subject: Order confirmation P00101

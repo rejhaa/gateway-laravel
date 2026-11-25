@@ -1,3 +1,6 @@
+Authentication-Results: mx.vuoksigolf.example; spf=pass
+ smtp.mailfrom=tyforge.com.tw; dkim=pass header.d=tyforge.com.tw; dmarc=pass
+ header.from=tyforge.com.tw
 From: Mei-Ling Chen <meiling.chen@tyforge.com.tw>
 To: Vuoksi Golf purchasing <purchasing@vuoksigolf.fi>
 Cc: Elina Koski <elina.koski@vuoksigolf.fi>

@@ -91,7 +91,7 @@ final class ProposalPresenter
      *
      * @param  Collection<int, Proposal>  $proposals
      * @return list<array{
-     *     message: array{id: string, from: string|null, sender: string|null, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>},
+     *     message: array{id: string, from: string|null, sender: string|null, address: string|null, verified: bool|null, marks: list<string>, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>},
      *     proposals: Collection<int, Proposal>,
      * }>
      */
@@ -109,7 +109,7 @@ final class ProposalPresenter
             ])
             ->map(fn (Collection $group, int|string $id): array => [
                 // An id of digits alone comes back from groupBy as an integer key.
-                'message' => self::message((string) $id, $messages->get($id)),
+                'message' => self::message((string) $id, $messages->get($id), $this->senderMarks($group, $messages->get($id))),
                 'proposals' => $group->values(),
             ])
             ->values()
@@ -258,18 +258,24 @@ final class ProposalPresenter
 
     /**
      * The day is short, for the card ("5 Nov"). The time is absolute, for the
-     * web page ("5 Nov 2026, 11:12").
+     * web page ("5 Nov 2026, 11:12"). The sender is the display name, which
+     * the sender chose, so the screens show the address beside it, followed
+     * by the marks.
      *
-     * @return array{id: string, from: string|null, sender: string|null, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>}
+     * @param  list<string>  $marks  what senderMarks() returned
+     * @return array{id: string, from: string|null, sender: string|null, address: string|null, verified: bool|null, marks: list<string>, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>}
      */
-    private static function message(string $id, ?Message $message): array
+    private static function message(string $id, ?Message $message, array $marks): array
     {
         $date = $message?->date->setTimezone((string) config('gateway.timezone'));
 
         return [
             'id' => $id,
             'from' => $message?->from,
-            'sender' => $message === null ? null : self::sender($message->from),
+            'sender' => $message === null ? null : self::sender($message),
+            'address' => $message?->fromAddress,
+            'verified' => $message?->fromVerified,
+            'marks' => $marks,
             'subject' => $message?->subject,
             'date' => $date?->toIso8601String(),
             'day' => $date?->format('j M'),
@@ -279,12 +285,41 @@ final class ProposalPresenter
         ];
     }
 
-    /** The display name of a From header, or its address when it has no name. */
-    private static function sender(string $from): string
+    /**
+     * What the screens warn about a message's sender, on every proposal that
+     * cites it and whatever its reasons are. A sender the mail server did not
+     * verify is marked, and each proposal's process adds what it has to say
+     * about the sender, such as that the address is not at a mail domain of
+     * the order's supplier.
+     *
+     * @param  Collection<int, Proposal>  $proposals  the proposals that cite the message
+     * @return list<string>
+     */
+    private function senderMarks(Collection $proposals, ?Message $message): array
     {
-        $name = trim(Str::before($from, '<'), " \t\"");
+        if ($message === null) {
+            return [];
+        }
 
-        return $name !== '' ? $name : trim($from, " \t<>");
+        $marks = $message->fromVerified ? [] : ['sender not verified'];
+
+        foreach ($proposals as $proposal) {
+            $marks[] = $this->processes->named($proposal->process)->senderMark($proposal, $message);
+        }
+
+        return array_values(array_unique(array_filter($marks)));
+    }
+
+    /**
+     * The display name of a From header. A header with no name, or with a
+     * name that is written as an address, gives the real address, so a name
+     * such as "orders@supplier.example" cannot stand in for it.
+     */
+    private static function sender(Message $message): string
+    {
+        $name = trim(Str::before($message->from, '<'), " \t\"");
+
+        return $name !== '' && ! str_contains($name, '@') ? $name : $message->fromAddress ?? trim($message->from, " \t<>");
     }
 
     /** The first name of the user the gateway acts for, such as Riku. */

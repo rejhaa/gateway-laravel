@@ -1,3 +1,6 @@
+Authentication-Results: mx.vuoksigolf.example; spf=pass
+ smtp.mailfrom=vuoksigolf.fi; dkim=pass header.d=vuoksigolf.fi; dmarc=pass
+ header.from=vuoksigolf.fi
 From: Riku Lindgren <riku.lindgren@vuoksigolf.fi>
 To: Vuoksi Golf purchasing <purchasing@vuoksigolf.fi>
 Subject: Reno grips P00108, cut to 120

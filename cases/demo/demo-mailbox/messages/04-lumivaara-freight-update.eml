@@ -1,3 +1,6 @@
+Authentication-Results: mx.vuoksigolf.example; spf=pass
+ smtp.mailfrom=lumivaara.example; dkim=pass header.d=lumivaara.example;
+ dmarc=pass header.from=lumivaara.example
 From: Lumivaara Freight <news@lumivaara.example>
 To: Vuoksi Golf purchasing <purchasing@vuoksigolf.fi>
 Subject: Freight update November 2026: Asia to Northern Europe

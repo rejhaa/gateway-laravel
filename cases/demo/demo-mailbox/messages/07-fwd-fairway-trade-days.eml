@@ -1,3 +1,6 @@
+Authentication-Results: mx.vuoksigolf.example; spf=pass
+ smtp.mailfrom=vuoksigolf.fi; dkim=pass header.d=vuoksigolf.fi; dmarc=pass
+ header.from=vuoksigolf.fi
 From: Mikko Saarinen <mikko.saarinen@vuoksigolf.fi>
 To: Vuoksi Golf purchasing <purchasing@vuoksigolf.fi>
 Subject: Fwd: Invitation: Fairway Trade Days 2027, Helsinki 27 to 28 January

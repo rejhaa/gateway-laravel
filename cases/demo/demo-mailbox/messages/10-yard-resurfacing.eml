@@ -1,3 +1,6 @@
+Authentication-Results: mx.vuoksigolf.example; spf=pass
+ smtp.mailfrom=vuorela.example; dkim=pass header.d=vuorela.example; dmarc=pass
+ header.from=vuorela.example
 From: Anu =?utf-8?q?Heikkil=C3=A4?= <anu.heikkila@vuorela.example>
 To: Vuoksi Golf purchasing <purchasing@vuoksigolf.fi>,
  Vuoksi Golf office <office@vuoksigolf.fi>

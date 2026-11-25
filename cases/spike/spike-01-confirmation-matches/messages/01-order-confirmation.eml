@@ -1,3 +1,6 @@
+Authentication-Results: mx.vuoksigolf.example; spf=pass
+ smtp.mailfrom=taiyuan-forge.example; dkim=pass
+ header.d=taiyuan-forge.example; dmarc=pass header.from=taiyuan-forge.example
 From: Mei-Ling Chen <orders@taiyuan-forge.example>
 To: Vuoksi Golf purchasing <purchasing@vuoksigolf.fi>
 Subject: Order confirmation P00101

@@ -33,16 +33,20 @@ final class Inbound
         ?string $body = null,
         string $date = '2026-11-05 09:12:00',
         array $attachments = [],
+        string $fromAddress = 'sales@taiyuan.example',
+        bool $fromVerified = true,
     ): Message {
         return new Message(
             id: Message::idFor($messageIdHeader),
-            from: 'Tai-Yuan Forge & Shaft <sales@taiyuan.example>',
+            from: "Tai-Yuan Forge & Shaft <{$fromAddress}>",
             to: 'Riku Lindgren <riku@vuoksi.example>',
             subject: $subject,
             date: CarbonImmutable::parse($date, 'UTC'),
             body: $body ?? "Dear Riku,\nwe confirm your order P00104:\n".self::QUOTE_AS_ORDERED."\nor, if you prefer:\n"
                 .self::QUOTE_PARTIAL."\nor else:\n".self::QUOTE_MOVED."\nBest regards",
             attachments: $attachments,
+            fromAddress: $fromAddress,
+            fromVerified: $fromVerified,
         );
     }
 

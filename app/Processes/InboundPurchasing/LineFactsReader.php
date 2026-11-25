@@ -21,7 +21,10 @@ final class LineFactsReader
 
     private const LINE_FIELDS = ['order_id', 'product_id', 'product_qty', 'date_planned', 'date_promised', 'x_confirmed_qty', 'x_confirmed_date', 'move_dest_ids'];
 
-    public function __construct(private readonly OdooClient $odoo) {}
+    public function __construct(
+        private readonly OdooClient $odoo,
+        private readonly SupplierReader $suppliers,
+    ) {}
 
     /**
      * @throws InputError when the line does not exist
@@ -36,6 +39,8 @@ final class LineFactsReader
             ?? throw new InputError("The purchase.order.line {$lineId} has no product, so it is a section or a note and not a line to change.");
         $order = $this->odoo->read($actor, 'purchase.order', [self::id($line['order_id'])], ['name', 'partner_ref', 'partner_id', 'state'])[0];
         $product = $this->odoo->read($actor, 'product.product', [$productId], ['default_code', 'name', 'seller_ids'])[0];
+        $supplierId = self::id($order['partner_id']);
+        $supplier = $supplierId === null ? ['name' => '', 'domains' => []] : $this->suppliers->read($actor, $supplierId);
 
         return new LineFacts(
             lineId: $lineId,
@@ -45,13 +50,15 @@ final class LineFactsReader
             productId: $productId,
             productName: (string) $product['name'],
             productCode: self::text($product['default_code']),
-            productNames: $this->productNames($actor, $product, $productId, self::id($order['partner_id'])),
+            productNames: $this->productNames($actor, $product, $productId, $supplierId),
             orderedQty: (float) $line['product_qty'],
             plannedDate: self::localDate($line['date_planned']),
             requestedDate: self::localDate($line['date_promised']),
             confirmedQty: $line['x_confirmed_qty'] === false ? null : (float) $line['x_confirmed_qty'],
             confirmedDate: self::localDate($line['x_confirmed_date']),
             waiting: $this->waiting($actor, $line['move_dest_ids']),
+            supplierName: $supplier['name'],
+            supplierDomains: $supplier['domains'],
         );
     }
 

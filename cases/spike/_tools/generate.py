@@ -34,6 +34,10 @@ OUT = Path(__file__).resolve().parent.parent
 TODAY = "2026-10-10"
 TO = formataddr(("Vuoksi Golf purchasing", "purchasing@vuoksigolf.fi"))
 
+# The id of the server that receives the purchasing mailbox's mail. It writes the
+# Authentication-Results header the gateway reads (gateway.mailbox.authserv_id).
+AUTHSERV_ID = "mx.vuoksigolf.example"
+
 TY = "Tai-Yuan Forge & Shaft Co., Ltd."
 SG = "Saigon Grip Works Co., Ltd."
 NFP = "Nordic Freight Partners Oy"
@@ -844,8 +848,16 @@ def render_pdfs(pages: dict[str, str]) -> dict[str, bytes]:
     return out
 
 
+def authentication_results(address: str) -> str:
+    """What the purchasing mailbox's server records on a message whose sender it verified (RFC 8601)."""
+    domain = address.split("@")[1]
+    return (f"{AUTHSERV_ID}; spf=pass smtp.mailfrom={domain}; dkim=pass header.d={domain}; "
+            f"dmarc=pass header.from={domain}")
+
+
 def build_eml(case_id: str, n: int, m: dict, pdf: bytes | None) -> bytes:
     msg = EmailMessage(policy=SMTP)
+    msg["Authentication-Results"] = m.get("authentication") or authentication_results(m["sender"][1])
     msg["From"] = formataddr(m["sender"])
     msg["To"] = TO
     msg["Subject"] = m["subject"]

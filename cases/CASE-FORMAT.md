@@ -8,7 +8,7 @@ the purchasing mailbox the agent works through.
 
 ```
 cases/
-  demo/demo-mailbox/     the one case of the demo walkthrough (demo/README.md)
+  demo/demo-mailbox/     the case of the demo walkthrough (demo/README.md)
   spike/spike-NN-*/      nine cases, one per scene of the base seed (spike/INDEX.md)
   hard/hard-NN-*/        seven harder development cases (hard/INDEX.md)
 ```
@@ -65,8 +65,14 @@ through the mailbox. The run gives it to the agent.
 ### setup
 
 - `suppliers`: added suppliers, each `{ "name", "country", "city",
-  "lead_days" }`. The base suppliers are named exactly `Tai-Yuan Forge &
-  Shaft Co., Ltd.` and `Saigon Grip Works Co., Ltd.`.
+  "lead_days" }` with an optional `"email"`, the supplier's address in
+  Odoo, and an optional `"mail_domains"`, the domains the supplier sends
+  mail from, separated by commas. The base suppliers are named exactly
+  `Tai-Yuan Forge & Shaft Co., Ltd.` and `Saigon Grip Works Co., Ltd.`,
+  and `odoo/INBOUND-SEED.md` gives their addresses and mail domains. The
+  gateway takes a message as a supplier's only when its sender is at one
+  of the supplier's mail domains, so a supplier without one has no
+  message a rule applies.
 - `products`: added products, each `{ "ref", "name", "cost", "supplier" }`.
   Added products are bought for stock and feed no manufacturing order.
 - `vendor_codes`: the supplier's own code and name for a product, each
@@ -133,6 +139,18 @@ Names may repeat across cases, because each case loads alone.
 The mail files in `messages/`, in the order they arrived. Each is an RFC
 5322 message with MIME attachments, sent to `purchasing@vuoksigolf.fi`,
 with its own `Date` header.
+
+A file is the message as the mailbox's server stored it, so it starts with
+the `Authentication-Results` header (RFC 8601) that server added. The
+server's id is `mx.vuoksigolf.example`. The header of a message whose
+sender the server verified reads
+
+    Authentication-Results: mx.vuoksigolf.example; spf=pass
+     smtp.mailfrom=taiyuan-forge.example; dkim=pass
+     header.d=taiyuan-forge.example; dmarc=pass header.from=taiyuan-forge.example
+
+and every case message has it for its own sender's domain, unless the case
+is about a sender the server did not verify.
 
 ### lead
 

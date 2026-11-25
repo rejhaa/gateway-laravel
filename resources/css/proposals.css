@@ -84,6 +84,11 @@
     font-weight: 600;
 }
 
+.gw-mail-head .gw-sender-mark {
+    color: var(--gw-warn);
+    font-weight: 600;
+}
+
 .gw-mail-body {
     display: grid;
     gap: 8px;

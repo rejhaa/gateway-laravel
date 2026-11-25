@@ -16,7 +16,10 @@ final class BillFactsReader
 {
     private const FIELDS = ['name', 'ref', 'state', 'partner_id', 'amount_untaxed', 'currency_id', 'x_dispute', 'x_dispute_note'];
 
-    public function __construct(private readonly OdooClient $odoo) {}
+    public function __construct(
+        private readonly OdooClient $odoo,
+        private readonly SupplierReader $suppliers,
+    ) {}
 
     /**
      * @throws InputError when the bill does not exist
@@ -26,6 +29,9 @@ final class BillFactsReader
     {
         $bill = $this->odoo->searchRead($actor, 'account.move', [['id', '=', $billId]], self::FIELDS, 1)[0]
             ?? throw new InputError("There is no account.move with id {$billId} in Odoo.");
+        $supplier = is_array($bill['partner_id'])
+            ? $this->suppliers->read($actor, (int) $bill['partner_id'][0])
+            : ['name' => '', 'domains' => []];
 
         return new BillFacts(
             billId: $billId,
@@ -37,6 +43,8 @@ final class BillFactsReader
             currency: is_array($bill['currency_id']) ? (string) $bill['currency_id'][1] : '',
             dispute: self::text($bill['x_dispute']),
             disputeNote: self::text($bill['x_dispute_note']),
+            supplierName: $supplier['name'],
+            supplierDomains: $supplier['domains'],
         );
     }
 

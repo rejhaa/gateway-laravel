@@ -123,12 +123,14 @@ app/
       LineFactsReader.php       reads LineFacts from Odoo
       BillFacts.php             what the gateway reads about a vendor bill
       BillFactsReader.php       reads BillFacts from Odoo
+      SupplierReader.php        reads the supplier's company and mail domains for both
       SharedConditions.php      the conditions both rules share
       Rules/ConfirmationAsOrdered.php
       Rules/PlannedDateUnderCap.php
       Effect.php                the Now and After rows and their notes
   Evidence/
     QuoteChecker.php            finds a quote, reads numbers and dates from it
+    SenderChecker.php           tells whether a sender's address is at an organization's mail domain
   Systems/
     Odoo/OdooClient.php         JSON-2 calls and error mapping
     Odoo/OdooReader.php         allowlisted search_read with domain validation
@@ -136,6 +138,7 @@ app/
     Mail/Mailbox.php            contract
     Mail/Message.php, Attachment.php
     Mail/FileMailbox.php        reads .eml files from a directory
+    Mail/AuthenticationResults.php  reads what the receiving server found about the sender
     Mail/PdfText.php            text layer through pdftotext
   Console/Commands/GatewayReset.php   gateway:reset, section 9
   Mcp/
@@ -204,6 +207,9 @@ interface Process
 
     /** The middle of the proposal's block on the screens (section 8). */
     public function effect(Proposal $proposal): array;
+
+    /** What the screens say beside a cited message's sender when it is not the party the record is with, or null. */
+    public function senderMark(Proposal $proposal, Message $message): ?string;
 }
 
 interface Rule
@@ -401,6 +407,7 @@ Both rules apply POL-1 to a write on one `purchase.order.line`. Each failed cond
 | Only the three fields are written | "the change is more than the planned date and the confirmed quantity and date" |
 | The quote was found, names the line's product, and states each written value | "no quoted passage that names {product} states the {field} {value} unambiguously", once per written value |
 | The document has a text layer | "the document has no text layer, so the quote was not checked" |
+| The cited message comes from the order's supplier | one of the four phrases under "The sender" |
 | The cited message names the order | "the message does not name the order {name} or the supplier's reference {partner_ref}", without the reference when the order has none |
 | No newer uncited message names the order | "a later message ({subjects}) also names the order" |
 | No applied rule-tier proposal cites this message for this line | "the same message was already applied to the line by rule in proposal {id}" |
@@ -440,10 +447,11 @@ No rule applies. The reason is "a dispute on a vendor bill is decided by a perso
 
 - The line: `order_id`, `product_id`, `product_qty`, `date_planned`, `date_promised`, `x_confirmed_qty`, `x_confirmed_date`, `move_dest_ids`.
 - The order: `name`, `partner_ref`, `partner_id`, `state`.
+- The supplier: the `commercial_partner_id` of the order's `partner_id`, which is the company, with that company's `name` and `x_mail_domains`. A person fills that text field with the domains the company sends mail from, and `SenderChecker::domains()` reads it into a list. The email addresses of the company and its contacts are not read. `SupplierReader` reads the supplier, for a line and for a bill.
 - The product's names: `default_code` and `name` on `product.product`, and `product_code` and `product_name` on the `product.supplierinfo` rows in its `seller_ids` that belong to the order's supplier and to this product or its template.
 - Waiting manufacturing orders: the `stock.move` records in `move_dest_ids`, their `raw_material_production_id`, and each `mrp.production` with `name`, `date_start` and the sum of its moves' `product_uom_qty` as its need.
 
-`BillFactsReader` reads a vendor bill's `name`, `ref`, `state`, `partner_id`, `amount_untaxed`, `currency_id`, `x_dispute` and `x_dispute_note`.
+`BillFactsReader` reads a vendor bill's `name`, `ref`, `state`, `partner_id`, `amount_untaxed`, `currency_id`, `x_dispute` and `x_dispute_note`, and the supplier behind its `partner_id` as for a line. No rule reads a bill's supplier. The screens use it to mark the sender.
 
 The core reads the mailbox facts into `Evidence`: the cited message, and every message newer than it. The shared conditions decide which of them name the order, so the facts stay what Odoo holds and the stale check compares nothing else.
 
@@ -461,6 +469,39 @@ A datetime from Odoo is converted from UTC to Europe/Helsinki before its date is
 Treating a dotted date such as `06.11.2026` as ambiguous is the strict reading of the rule. It sends some European documents to Riku that a day-first assumption would pass. This is the cautious choice and is the first thing to revisit with real mail.
 
 "A message names the order" means the order's `name` or `partner_ref` appears in the subject, body or attachment text as a whole token, bounded by characters that are not letters or digits. A name shorter than 4 characters is ignored.
+
+### The sender
+
+A rule applies a write only when the cited message comes from the order's supplier. Without this, anyone who can get a mail into the mailbox and knows an order number and a product code can have a rule write for them. `SharedConditions` checks the sender in the order of this table and gives the first phrase that fits.
+
+| Check | Phrase when it fails |
+|---|---|
+| `Message::$fromAddress` is not null | "the message has no single sender address" |
+| `LineFacts::$supplierDomains` is not empty | "{supplier} has no mail domain in Odoo to check the sender against" |
+| `SenderChecker::belongsTo()` | "the sender {address} is not at a mail domain of {supplier} in Odoo" |
+| `Message::$fromVerified` | "the mail server did not verify that the message comes from {address}" |
+
+The check answers two separate questions. Odoo answers whose domain the address is at, and the receiving mail server answers whether the message really comes from it.
+
+**Whose domain.** Odoo holds the supplier's mail domains in `x_mail_domains` on the company, a text field on `res.partner` that this database adds (`odoo/INBOUND-SEED.md`). A person enters the domains the company sends mail from, separated by commas, semicolons or white space. `SenderChecker::domains()` reads them in lowercase and drops an @ written in front of one, and `SenderChecker::belongsTo($address, $domains)` is true when the address's domain is one of them. Domains are compared whole, so `mail.taiyuan.example` is not `taiyuan.example`. The unit is the domain because that is what mail authentication proves. The email addresses Odoo holds for the company and its contacts decide nothing, because a contact's address at `gmail.com` would make every sender at `gmail.com` the supplier's. A supplier that mails from such an address gets no mail domain, and its messages wait for Riku. An entry that is no domain, such as a whole address, equals no sender's domain. No proposal writes the field, because `WRITABLE` holds nothing on `res.partner`. The gateway takes the field as a person wrote it, so a mail provider's domain entered there lets every customer of that provider pass as the supplier.
+
+**Really from it.** The sender writes the From header, so its text proves nothing. The receiving mail server checks SPF, DKIM and DMARC when the message arrives and records the outcome in an `Authentication-Results` header (RFC 8601). `AuthenticationResults::verifies($headers, $authservId, $fromDomain)` is true when a header written by the receiving server holds one of these results:
+
+- `dmarc=pass` with `header.from` equal to the From domain.
+- `dkim=pass` with `header.d` equal to the From domain, or with the domain of `header.i` equal to it when the result has no `header.d`.
+- `spf=pass` with the domain of `smtp.mailfrom` equal to the From domain.
+
+A DKIM or SPF pass for another domain does not count, because every sender passes both for a domain of their own. A DKIM result's signing domain is `header.d`. The signing identity `header.i` may be at a subdomain of it, which the holder of the signing key need not speak for, so it counts only for a server that writes no `header.d`. The second and third results cover a supplier whose domain has no DMARC record. A `dmarc=fail` for the From domain makes the sender unverified whatever else the header holds, because an aligned DKIM or SPF pass cannot stand beside a real DMARC fail.
+
+A header counts only when its first part is the receiving server's id, `gateway.mailbox.authserv_id`, alone or followed by a version number, because a sender can add a header of that name. This relies on the receiving server removing an incoming header that carries its id, which section 5 of the RFC requires.
+
+The header also holds text the sender chose, such as the envelope address in `smtp.mailfrom`. The class therefore reads the header token by token as the RFC defines it. A semicolon or an equals sign inside a quoted string or a comment separates nothing, a comment may hold another comment, and a backslash escapes the next character. An equals sign separates a method or a property name from its value, and the value then runs to the next white space, semicolon or comment. The grammar lets an address hold an equals sign unquoted, so the envelope address `taiyuan.example=bounce@attacker.example` is one value at `attacker.example`, and its start is not a pass for `taiyuan.example`. A header whose comment or quoted string never ends gives no result, and a property named twice in one result has no value. This relies on the receiving server quoting any copied text that holds a semicolon or white space, as the RFC's grammar requires. A server that copies such text unquoted writes a header no reader can tell from a genuine result.
+
+The gateway does not verify DKIM itself. A signing key is rotated and then old mail no longer verifies, and SPF needs the address of the connecting server, which only the receiving server saw.
+
+`FileMailbox` sets `fromAddress` to the one address of the one From header, in lowercase. A message with several From headers, or several addresses in one, has no sender address, because nobody can say which one the receiving server checked. The display name is the sender's choice and is never compared. It takes the From and `Authentication-Results` headers by their exact names, in any case. The mail parser's own lookup also returns a header whose name differs in punctuation, such as `Authentication_Results` or `F-rom`, and a receiving server neither writes nor removes a header of such a name.
+
+A forwarder is not the supplier, and neither is a colleague who forwards a supplier's document, so a change proposed from such a message waits for Riku. The original sender inside a forwarded message is text anyone can type. POL-1 allows a rule to record a forwarder's notice, and this version does not use that allowance.
 
 ### Approving and rejecting
 
@@ -581,7 +622,7 @@ The heading "If you say yes, Odoo changes this" and the reason field with the bu
 `App\Gateway\ProposalPresenter` holds every other word of the screens, so the card's JSON, the Blade component and the web pages share one source:
 
 - `block(Proposal)` is one block as data: `id`, `title`, `summary`, `status`, `tier`, `because` ("You are asked because {reasons joined with "; "}." on a human-tier proposal, otherwise null), `reasons`, `effect`, `quote` (`text`, `source`, `document` with the body named "the mail body", `location`, `status`, and `check`, "found in the document", "not checked, the document has no text layer", or null when the quote was never checked, as on a denied proposal), `line` (the collapsed line below, null while pending), and `rule`, `policy_section`, `decided_by`, `decided_via`, `decided_at` (ISO 8601), `decision_reason` and `error`.
-- `byMessage(proposals)` groups proposals by the message they cite, oldest message first, and `groups(proposals)` does the same with blocks. Both take `newestFirst`, which the history sets. A group's `message` has `id`, `from`, `sender` (the display name), `subject`, `date` (ISO 8601), `day` ("5 Nov"), `time` ("5 Nov 2026, 11:12"), `body` and `attachments` (the names). A message no longer in the mailbox comes last with only its id. A group also has `pending`, the count of its pending proposals.
+- `byMessage(proposals)` groups proposals by the message they cite, oldest message first, and `groups(proposals)` does the same with blocks. Both take `newestFirst`, which the history sets. A group's `message` has `id`, `from`, `sender` (the display name, or the address when the header has no name or a name written as an address), `address` (the message's `fromAddress`), `verified` (its `fromVerified`), `marks` (the warnings about the sender, described under "The card"), `subject`, `date` (ISO 8601), `day` ("5 Nov"), `time` ("5 Nov 2026, 11:12"), `body` and `attachments` (the names). A message no longer in the mailbox comes last with only its id. A group also has `pending`, the count of its pending proposals.
 - `line(Proposal)`, `outcome(Proposal)` (the sentence the card gives the agent after a decision), `heading(n)` and `waitingNote(n)` (the note `list_proposals` gives the agent).
 - `appliedByRule()` is the list under "Applied by rule ({n})": every applied rule-tier proposal with `id`, `title` and `rule`.
 - `odooTrouble(OdooException)` is the sentence a screen shows when Odoo failed in a way the service did not settle: the exception's message and "Try again in a moment."
@@ -639,7 +680,7 @@ Saigon Grip Works · Packing list, your order P00101 · 3 Nov 2026, 08:40
 ```
 
 - The heading counts what waits: "{n} decisions wait for you", "1 decision waits for you", or "Nothing waits for you".
-- Each group starts with sender, subject and the message's `time`. The fold "The mail" shows the body and the attachment names.
+- Each group starts with sender, address, subject and the message's `time`. The sender chose the name, so the address follows it in muted text, and it is left out when the name is the address. The marks follow the address in the warning colour, joined by commas. A sender the mail server did not verify gets "sender not verified". A sender whose address is not at a mail domain of the supplier of a proposal's record gets "not at a mail domain of {supplier}", which `Process::senderMark()` returns from the proposal's stored facts, for a line and for a bill. A proposal whose stored facts name no supplier adds no mark. The marks are there on every proposal, because the sender's phrase is among the reasons only when a rule was tried, and a bill dispute or a proposal made with the rule tier off has other reasons. The fold "The mail" shows the body and the attachment names.
 - "Yes to all {n}" appears on a group with more than one pending proposal. It sends one decision per proposal, and each gets its own audit rows.
 - "No" stays disabled until the reason field has text. While a decision is sent the pressed button reads "Recording".
 - "Applied by rule ({n})" lists one line per change, its title and rule name.
@@ -662,7 +703,7 @@ Outside a host, such as a page opened on its own, the card has no bridge. It sti
   "waiting": 2,
   "groups": [
     {
-      "message": {"id": "…", "from": "…", "sender": "…", "subject": "…", "date": "2026-11-05T11:12:00+02:00", "day": "5 Nov", "body": "…", "attachments": ["TYF-OC-26-0918.pdf"]},
+      "message": {"id": "…", "from": "…", "sender": "…", "address": "…", "verified": true, "marks": [], "subject": "…", "date": "2026-11-05T11:12:00+02:00", "day": "5 Nov", "body": "…", "attachments": ["TYF-OC-26-0918.pdf"]},
       "pending": 2,
       "proposals": [{"id": 12, "title": "…", "summary": "…", "status": "pending", "tier": "human", "because": "…", "reasons": ["…"], "effect": {…}, "quote": {…}, "line": null, "rule": null, "policy_section": null, "decided_by": null, "decided_via": null, "decided_at": null, "decision_reason": null, "error": null}]
     }
@@ -738,9 +779,9 @@ interface Mailbox
 }
 ```
 
-`Message` has `id`, `from`, `to`, `subject`, `date`, `body` and `attachments`. `Attachment` has `name`, `contentType`, `hasTextLayer` and `lines`, a map of location (`p1.l17`) to text. A text attachment is numbered as one page, and any other type that is not a PDF has no text layer. A message's id is the first 12 hex characters of the sha256 of its `Message-ID` header, so nothing in a tool's output shows where mail comes from.
+`Message` has `id`, `from`, `to`, `subject`, `date`, `body`, `attachments`, `fromAddress` and `fromVerified`. The last two are described under "The sender" in section 6, and a mailbox that sets neither gives a message no verified sender. `Attachment` has `name`, `contentType`, `hasTextLayer` and `lines`, a map of location (`p1.l17`) to text. A text attachment is numbered as one page, and any other type that is not a PDF has no text layer. A message's id is the first 12 hex characters of the sha256 of its `Message-ID` header, so nothing in a tool's output shows where mail comes from.
 
-`FileMailbox` caches each parsed message and its attachment text under the file's path and modification time, because every `propose` looks through the mailbox for newer messages. It reads every `.eml` in `config('gateway.mailbox.path')` with `zbateson/mail-mime-parser`, which needs no PHP extension. The service provider binds `Mailbox` to it. `config/cache.php` allows `Message`, `Attachment` and `CarbonImmutable` in `serializable_classes`, so the file cache can read a cached message back. A real mailbox is another class behind the same interface.
+`FileMailbox` caches each parsed message and its attachment text under the file's path and modification time, the receiving server's id and the constant `FileMailbox::READING`, because every `propose` looks through the mailbox for newer messages. A change of the id therefore reads every message again, and so does raising `READING`, which every change to how a file becomes a `Message` has to do. A file is a message as the receiving server stored it, with the `Authentication-Results` header that server added. It reads every `.eml` in `config('gateway.mailbox.path')` with `zbateson/mail-mime-parser`, which needs no PHP extension. The service provider binds `Mailbox` to it. `config/cache.php` allows `Message`, `Attachment` and `CarbonImmutable` in `serializable_classes`, so the file cache can read a cached message back. A real mailbox is another class behind the same interface.
 
 `PdfText` pipes the PDF to `pdftotext -layout -enc UTF-8 - -` through Laravel's `Process` facade, which wraps Symfony Process and can be faked in tests. It splits pages on the form feed, collapses runs of spaces, drops empty lines, and numbers what is left as `p<page>.l<line>`. A document with fewer than 20 characters of text per page has no text layer and gets no lines. A missing binary or a failed run throws and is reported, and the attachment is returned with no lines and `hasTextLayer` false.
 
@@ -763,6 +804,7 @@ interface Mailbox
 | `gateway.odoo.url` (`ODOO_URL`) | `http://localhost:8070` |
 | `gateway.odoo.keys_file` | `odoo/data/inbound-users.json` |
 | `gateway.mailbox.path` (`GATEWAY_MAILBOX_PATH`) | `cases/demo/demo-mailbox/messages` |
+| `gateway.mailbox.authserv_id` (`GATEWAY_MAILBOX_AUTHSERV_ID`) | `mx.vuoksigolf.example`, the id of the receiving server in every case mail (`cases/CASE-FORMAT.md`). With no id, no sender is verified |
 | `gateway.card.token_hours` (`GATEWAY_CARD_TOKEN_HOURS`) | 12 |
 
 `config/mcp.php` sets `mcp.allowed_origins` from `MCP_ALLOWED_ORIGINS`, a comma-separated list that is empty by default. The package's other `mcp.*` settings keep their defaults.
@@ -832,7 +874,11 @@ One dataset per rule. Each row starts from a `LineFacts` that passes and changes
 | it fails with no requested date | a null date is read as a zero slip |
 | it fails with one manufacturing order waiting | a date move reaches production with no person |
 | it fails when the confirmed date differs from the new planned date | the two dates drift apart by rule |
-| each shared condition fails alone and yields its phrase (8 rows in `SharedConditionsTest`, and the rule tier switch in `ProposalServiceTest`) | a condition is dropped or its phrase is wrong |
+| each shared condition fails alone and yields its phrase (13 rows in `SharedConditionsTest`, and the rule tier switch in `ProposalServiceTest`) | a condition is dropped or its phrase is wrong |
+| a sender at another organization fails | a forwarder, a colleague or a stranger who knows the order number moves a date by rule |
+| a sender the mail server did not verify fails, in `SharedConditionsTest` and through `propose` | a forged From header passes as the supplier |
+| a supplier with no mail domain in Odoo fails | a supplier nobody gave a mail domain accepts every sender |
+| a verified address at the supplier's second mail domain passes | only the first of a supplier's mail domains counts |
 | a partial quantity fails both rules | a short confirmation is recorded as full |
 | the rule tier off sends a passing write to Riku | the switch does nothing |
 | a second proposal from the same message on the same line waits | one document is applied twice by rule |
@@ -848,6 +894,33 @@ One dataset per rule. Each row starts from a `LineFacts` that passes and changes
 | `03/04/2026` is ambiguous, `29.11.2026` and `2026-12-14` are not | a month-first date is written as day-first |
 | `1,200` and `1.200,00` read as 1200 | a quantity with a thousands mark fails the rule |
 | `P00101` does not name the order inside `P001012` | a message about another order blocks or supports this one |
+
+### The sender (`tests/Unit/SenderCheckerTest.php`, `tests/Unit/AuthenticationResultsTest.php`, `tests/Feature/Systems/Mail/FileMailboxTest.php`)
+
+| Test | Bug it catches |
+|---|---|
+| an address at one of the organization's mail domains belongs, and another domain, a subdomain, a domain that ends alike and the domain before a second @ do not | a stranger passes as the organization, or a colleague at its own domain is turned away |
+| the field's domains are read in lowercase, with or without an @, across commas and line breaks, and an empty field gives none | a domain a person wrote differently does not count, or an empty field counts as a domain |
+| a whole address in the field takes no sender | an address in the field opens its domain, or every domain, to all senders |
+| a DMARC pass, or a DKIM or SPF pass, counts only for the From domain | a sender who passes for a domain of their own forges the supplier's address |
+| a DKIM pass for another signing domain does not count, whatever its signing identity says | the holder of a parent domain's key, or a sender who signs with their own domain, passes as the supplier |
+| a header from another server, a longer server id and a server id followed by anything but a version do not count | a header the sender added is read as the receiving server's |
+| a result inside a quoted string or a comment is not read, also after an escaped quote or parenthesis, inside a nested comment and after a comment that closed inside a comment | a sender forges a pass with text the receiving server copied into its header |
+| an equals sign inside a value belongs to the value, with or without spaces around the separator | a sender whose envelope or signing address starts with the supplier's domain and an equals sign passes SPF or DKIM as the supplier |
+| a DMARC fail beside a DKIM pass for the domain, a property named twice in either order and an unfinished comment or quoted string verify nothing | a contradictory or malformed header verifies a sender |
+| a sender at another organization that is also unverified gets the organization phrase alone (`SharedConditionsTest`) | the checks run in another order |
+| the sender is the one From address, and two addresses or two From headers give none | the supplier's address in a display name or in a second address counts as the sender |
+| a header named `Authentication_Results` verifies nothing, a header named `F-rom` is no From header, and a message with only `F-rom` has no sender | a header the sender added under a similar name is read as the receiving server's, stands in for the sender, or breaks the mailbox |
+| a mail file reaches a rule write only with a pass for the supplier's domain, and not with an envelope address that starts with that domain or a DKIM pass for another domain | the reader and the conditions each pass their own tests while a forged file gets a rule write |
+| no server id or an empty one verifies no sender, in the mailbox and in the reader | a header from any server, or one with an empty id, verifies a sender |
+| a changed server id reads a cached message again | a sender verified under the old id stays verified |
+| the supplier's mail domains are those of its company, and neither a contact's field nor a contact's address adds one (`LineFactsReaderTest`) | an order on a contact person has no mail domains, or a contact's `gmail.com` address counts |
+| the approval page shows the address after the name (`WebPagesTest`) | Riku sees only the name the sender chose |
+| the approval page marks an unverified sender with the rule tier off (`WebPagesTest`) | a forged sender looks like the supplier where the reasons say nothing about the sender |
+| the approval page marks a verified sender outside the supplier's mail domains with the rule tier off, and the card gets the mark on a bill dispute (`WebPagesTest`, `CardTest`) | a lookalike of the supplier's domain looks like the supplier where the reasons say nothing about the sender |
+| a bill's facts hold the company and the mail domains of its supplier, and none for a bill with no partner (`BillFactsReaderTest`) | a bill on a contact person has no supplier to compare the sender with, or a bill with no partner fails to load |
+| the card gets the real address for a name written as an address, and `verified` false (`CardTest`) | a display name stands in for the address, or the card cannot mark a forged sender |
+| an empty field gives no mail domain (`LineFactsReaderTest`) | the false Odoo returns for an empty field is read as a domain |
 
 ### Access (`tests/Feature/AccessTest.php`)
 
@@ -899,6 +972,7 @@ One test per tool through `GatewayServer::actingAs($riku)->tool(...)`, plus the 
 | approving a changed record sets `stale` and writes nothing | an approval overwrites a newer value |
 | approving when the record's order name differs sets `stale` | after a reseed the write lands on another order's line |
 | approving after a waiting manufacturing order's start moved sets `stale` | Riku approves on a gap the screen misstated |
+| stored facts that hold a fact this version no longer has still load (`tests/Unit/LineFactsTest.php`) | a proposal stored before a fact was removed breaks the history page and its approval |
 | an Odoo 403 on approval sets `failed` with Odoo's message | a refused write is shown as done |
 | a timeout on write followed by a matching re-read sets `applied` | an unknown outcome is recorded as failed and proposed again |
 | rejecting without a reason is refused | the agent gets a no with nothing to act on |
@@ -975,8 +1049,20 @@ Twelve cases scored right and four scored safe. No case scored missed or wrong, 
 Three of these outcomes come from the gateway and not from a choice the agent made:
 
 - `mail_read_message` returns a `message/rfc822` attachment with no text, so the agent never saw the confirmation PDF inside the forwarded mail of hard-01.
-- A forwarder's notice that describes the goods in general words ("60 pcs steel shafts") holds no passage with the product's name or the supplier's code, so the shared conditions send it to Riku. `expected` in spike-03 has a rule apply it, and the same condition held P00102 in the demo case.
+- A forwarder's notice that describes the goods in general words ("60 pcs steel shafts") holds no passage with the product's name or the supplier's code, so the shared conditions send it to Riku. `expected` in spike-03 has a rule apply it, and the same condition held P00102 in the demo case. A forwarder is also not the order's supplier, so the sender condition holds every forwarder's notice whatever its wording.
 - A scan cannot be read (section 1), so hard-02 cannot score above safe.
+
+The agent runs above were made before the sender condition existed, and the two demo runs before the demo mailbox held mails 11 to 13. Every message a rule applied in them comes from a verified address at a mail domain of the order's supplier, which a read of all case mail through `FileMailbox` and `SenderChecker` confirmed, so the condition changes none of those outcomes.
+
+**Sender mails.** Mails 11 to 13 of `cases/demo/demo-mailbox` were proposed through `ProposalService` against the seeded Odoo and the case's mail files, one proposal per message, with no agent. Each message states the ordered quantity for a date a rule would record, so the sender alone decides the outcome.
+
+| Message | Sender | Outcome |
+|---|---|---|
+| Confirmation of P00111 | `kevin.huang@taiyuan-forge.example`, verified. Odoo holds no contact with this address, and its domain is one of Tai-Yuan's mail domains | applied by `confirmation-as-ordered` |
+| Revised confirmation of P00112, 10 days later | `orders@taiyuan-forge.example`, with SPF and DMARC failed | held: "the mail server did not verify that the message comes from orders@taiyuan-forge.example" |
+| Confirmation of P00113 | `export@saigon-grip.example`, verified for that domain | held: "the sender export@saigon-grip.example is not at a mail domain of Saigon Grip Works Co., Ltd. in Odoo" |
+
+Each held proposal has that one reason, so a rule would have applied it without the sender condition. The approval page showed both with the sender's address after the name.
 
 ## 14. Build order
 
@@ -1001,5 +1087,6 @@ Each step ends with its tests green and `vendor/bin/pint` clean.
 - **Reading forwarded mail.** `mail_read_message` reads the parts of a `message/rfc822` attachment, the PDFs inside it included, so a confirmation that a colleague forwards as an attachment reaches the agent.
 - **A real sign-in**, and card buttons that open the first-party approval page, which closes the boundary in section 1.
 - **Method calls, notes and to-dos**, which bring back receipt validation and open items in Odoo.
-- **A real mailbox** behind the `Mailbox` interface.
+- **A real mailbox** behind the `Mailbox` interface. It sets `fromVerified` by its own provider's rule, because the header differs between providers. The header's exact form has to be read from real mail of that provider before the class is written.
+- **Forwarders on the order.** A forwarder partner on the purchase order in Odoo, whose organization `rule:planned-date-under-cap` accepts as a sender, so a forwarder's delivery notice can be applied by rule as POL-1 allows.
 - **A second process or system**, as a new directory under `app/Processes` or `app/Systems`.

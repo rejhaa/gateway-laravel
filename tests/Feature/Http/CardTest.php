@@ -9,6 +9,8 @@ use App\Http\Middleware\CardTokenOnly;
 use App\Models\AuditEntry;
 use App\Models\Proposal;
 use App\Models\User;
+use App\Systems\Mail\Message;
+use Carbon\CarbonImmutable;
 use Illuminate\Testing\TestResponse;
 use Tests\Support\FakeOdoo;
 use Tests\Support\Inbound;
@@ -151,6 +153,48 @@ it('returns an agent-written title containing HTML as plain data', function (): 
         ->assertJsonPath('groups.0.proposals.0.title', $title);
 });
 
+// Bug: a display name written as the supplier's address stands in for the real address, or the card
+// shows a forged sender with nothing that says the mail server did not verify it.
+it('gives the card the real address and says that the mail server did not verify it', function (): void {
+    $message = new Message(
+        Message::idFor('bank-details@attacker.example'),
+        '"sales@taiyuan.example" <x@attacker.example>',
+        'riku@vuoksi.example',
+        'New bank details',
+        CarbonImmutable::parse('2026-11-05 09:12:00', 'UTC'),
+        'Please use the new account.',
+        fromAddress: 'x@attacker.example',
+        fromVerified: false,
+    );
+    Inbound::mailbox($message);
+    Proposal::factory()->create(['message_id' => $message->id]);
+
+    $this->getJson('/card/proposals', cardHeaders())
+        ->assertOk()
+        ->assertJsonPath('groups.0.message.sender', 'x@attacker.example')
+        ->assertJsonPath('groups.0.message.address', 'x@attacker.example')
+        ->assertJsonPath('groups.0.message.verified', false)
+        ->assertJsonPath('groups.0.message.marks', ['sender not verified']);
+});
+
+// Bug: a bill dispute cites a mail from a lookalike of the supplier's domain and the card shows the sender with no
+// mark, because a dispute's reason never names the sender.
+it('gives the card a mark for a sender outside the supplier\'s mail domains on a bill dispute', function (): void {
+    $this->odoo->bill();
+    Inbound::mailbox(Inbound::message(subject: 'Invoice TYF-INV-2211', body: 'We invoice 120 heads, TYF-INV-2211.', fromAddress: 'billing@taiyuan-forge.example'));
+    Inbound::service()->propose(Inbound::agent(), Inbound::input([
+        'model' => 'account.move',
+        'record_id' => FakeOdoo::BILL,
+        'values' => ['x_dispute' => 'disputed', 'x_dispute_note' => 'Only 100 of the 120 heads arrived.'],
+        'quote' => 'We invoice 120 heads',
+    ]));
+
+    $this->getJson('/card/proposals', cardHeaders())
+        ->assertOk()
+        ->assertJsonPath('groups.0.message.verified', true)
+        ->assertJsonPath('groups.0.message.marks', ['not at a mail domain of Tai-Yuan Forge & Shaft']);
+});
+
 // Bug: the card misses what waits, or groups it under the wrong mail.
 it('lists what waits grouped by mail, and what rules applied', function (): void {
     $pending = pendingOnLine();
@@ -166,6 +210,9 @@ it('lists what waits grouped by mail, and what rules applied', function (): void
         ->assertJsonPath('heading', '1 decision waits for you')
         ->assertJsonPath('waiting', 1)
         ->assertJsonPath('groups.0.message.sender', 'Tai-Yuan Forge & Shaft')
+        ->assertJsonPath('groups.0.message.address', 'sales@taiyuan.example')
+        ->assertJsonPath('groups.0.message.verified', true)
+        ->assertJsonPath('groups.0.message.marks', [])
         ->assertJsonPath('groups.0.message.day', '5 Nov')
         ->assertJsonPath('groups.0.pending', 1)
         ->assertJsonPath('groups.0.proposals.0.id', $pending->id)
