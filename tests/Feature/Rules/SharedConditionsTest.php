@@ -30,6 +30,30 @@ it('fails each shared condition alone with its phrase', function (array $change,
         ['evidence' => ['found' => false]],
         ['the document has no text layer, so the quote was not checked'],
     ],
+    // Bug: a forwarder, a colleague or a stranger who knows the order number moves a date by rule.
+    'the sender is at another organization' => [
+        ['evidence' => ['fromAddress' => 'tracking@forwarder.example']],
+        ['the sender tracking@forwarder.example is not an address or a domain of Tai-Yuan Forge & Shaft in Odoo'],
+    ],
+    // Bug: a forged From header passes as the supplier.
+    'the mail server did not verify the sender' => [
+        ['evidence' => ['fromVerified' => false]],
+        ['the mail server did not verify that the message comes from sales@taiyuan.example'],
+    ],
+    // Bug: the checks run in another order, so a stranger's mail is reported as the supplier's own address failing verification.
+    'a sender at another organization that the mail server did not verify' => [
+        ['evidence' => ['fromAddress' => 'x@attacker.example', 'fromVerified' => false]],
+        ['the sender x@attacker.example is not an address or a domain of Tai-Yuan Forge & Shaft in Odoo'],
+    ],
+    'the message has no single sender address' => [
+        ['evidence' => ['fromAddress' => null]],
+        ['the message has no single sender address'],
+    ],
+    // Bug: a supplier nobody gave an address in Odoo accepts every sender.
+    'the supplier has no address in Odoo' => [
+        ['facts' => ['supplierAddresses' => []]],
+        ['Tai-Yuan Forge & Shaft has no email address in Odoo to check the sender against'],
+    ],
     'the message does not name the order' => [
         ['evidence' => ['subject' => 'Order confirmation']],
         ["the message does not name the order P00104 or the supplier's reference TYF-OC-26-0918"],
@@ -53,6 +77,13 @@ it('fails each shared condition alone with its phrase', function (array $change,
 // Bug: any later mail about anything blocks the rule.
 it('passes when the later message is about another order', function (): void {
     $case = RuleCase::confirmation()->with(evidence: ['laterSubjects' => ['Order confirmation P00105']]);
+
+    expect(SharedConditions::failures($case->write(), $case->lineFacts(), $case->evidence()))->toBe([]);
+});
+
+// Bug: every confirmation from a clerk who is not yet a contact in Odoo goes to Riku.
+it('passes when the sender is a verified address at the supplier\'s domain that Odoo does not hold', function (): void {
+    $case = RuleCase::confirmation()->with(evidence: ['fromAddress' => 'new.clerk@taiyuan.example']);
 
     expect(SharedConditions::failures($case->write(), $case->lineFacts(), $case->evidence()))->toBe([]);
 });

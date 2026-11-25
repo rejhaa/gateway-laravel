@@ -61,6 +61,14 @@ return [
         | Directory of .eml files, relative to the project root.
         */
         'path' => base_path(env('GATEWAY_MAILBOX_PATH', 'cases/demo/demo-mailbox/messages')),
+
+        /*
+        | The id the receiving mail server writes at the start of the
+        | Authentication-Results header it adds to each message. Only a
+        | header with this id says whether a message's sender is verified.
+        | Null means no message is.
+        */
+        'authserv_id' => env('GATEWAY_MAILBOX_AUTHSERV_ID', 'mx.vuoksigolf.example'),
     ],
 
     'card' => [

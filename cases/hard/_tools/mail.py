@@ -23,6 +23,10 @@ from html import escape
 
 PURCHASING = ("Vuoksi Golf purchasing", "purchasing@vuoksigolf.fi")
 
+# The id of the server that receives the purchasing mailbox's mail. It writes the
+# Authentication-Results header the gateway reads (gateway.mailbox.authserv_id).
+AUTHSERV_ID = "mx.vuoksigolf.example"
+
 
 @dataclass
 class Signature:
@@ -172,8 +176,13 @@ def _html(mail: Mail, cid: str | None) -> str:
 """
 
 
-def build(mail: Mail, seed: str) -> Message:
-    """The message as a Message object, for writing out or for forwarding as an attachment."""
+def build(mail: Mail, seed: str, *, received: bool = True) -> Message:
+    """The message as a Message object, for writing out or for forwarding as an attachment.
+
+    A received message starts with the Authentication-Results header of the purchasing mailbox's
+    server (RFC 8601), which verified the sender. A message forwarded as an attachment is the
+    sender's own copy and has none.
+    """
     cid = f"image001.png@01DD{_h(seed + 'cid', 4)}.{_h(seed + 'cid2', 8)}" if mail.signature.logo else None
     body = _multi("alternative", [_text(_plain(mail, cid), "plain"), _text(_html(mail, cid), "html")],
                   f"_000_{_h(seed + 'alt', 24)}_")
@@ -195,7 +204,7 @@ def build(mail: Mail, seed: str) -> Message:
         att.add_header("Content-Disposition", "attachment", filename=a.filename)
         parts.append(att)
     if mail.forwarded is not None:
-        inner = build(mail.forwarded, seed + "/fwd")
+        inner = build(mail.forwarded, seed + "/fwd", received=False)
         fwd = MIMEMessage(inner, policy=SMTP)
         _strip_mime_version(fwd)
         fwd.add_header("Content-Description", mail.forwarded_name)
@@ -208,7 +217,12 @@ def build(mail: Mail, seed: str) -> Message:
               "tyforge.com.tw": "TYZPR03MB6824.apcprd03.prod.outlook.com",
               "saigongrip.com.vn": "SG2PR04MB5502.apcprd04.prod.outlook.com"}.get(domain, f"mail.{domain}")
     host = server.split(".")[0]
-    headers = [
+    headers = []
+    if received:
+        headers.append(("Authentication-Results",
+                        f"{AUTHSERV_ID}; spf=pass smtp.mailfrom={domain}; dkim=pass header.d={domain}; "
+                        f"dmarc=pass header.from={domain}"))
+    headers += [
         ("From", formataddr(mail.sender)),
         ("To", ", ".join(formataddr(a) for a in mail.to)),
     ]

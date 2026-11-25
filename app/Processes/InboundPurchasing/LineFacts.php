@@ -18,6 +18,8 @@ final readonly class LineFacts implements Facts
     /**
      * @param  list<string>  $productNames  default_code and name, and the supplier's product_code and product_name
      * @param  list<array{name: string, start: string|null, need: float}>  $waiting  manufacturing orders that wait on the line, by name
+     * @param  string  $supplierName  the company the order's supplier belongs to
+     * @param  list<string>  $supplierAddresses  every email address of that company and its contacts, in lowercase
      */
     public function __construct(
         public int $lineId,
@@ -34,6 +36,8 @@ final readonly class LineFacts implements Facts
         public ?float $confirmedQty,
         public ?string $confirmedDate,
         public array $waiting = [],
+        public string $supplierName = '',
+        public array $supplierAddresses = [],
     ) {}
 
     /**

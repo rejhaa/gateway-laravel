@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Http;
  * Tests change $records directly to play someone editing Odoo.
  *
  * line() builds the records one purchase order line needs. They are the
- * confirmed order P00104, its product, and the line itself, 120 ordered and
+ * confirmed order P00104, its supplier, its product, and the line itself, 120 ordered and
  * planned for 2026-11-30 at 10:00 UTC, which is the requested date too.
  */
 final class FakeOdoo
@@ -74,6 +74,13 @@ final class FakeOdoo
             'partner_id' => [self::SUPPLIER, 'Tai-Yuan Forge & Shaft'],
             'state' => 'purchase',
             ...$order,
+        ];
+
+        $this->records['res.partner'][self::SUPPLIER] = [
+            'name' => 'Tai-Yuan Forge & Shaft',
+            'commercial_partner_id' => [self::SUPPLIER, 'Tai-Yuan Forge & Shaft'],
+            'type' => 'contact',
+            'email_normalized' => 'sales@taiyuan.example',
         ];
 
         $this->records['product.product'][self::PRODUCT] = [

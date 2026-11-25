@@ -7,7 +7,8 @@
         "name": "Xiamen Everbright Sporting Goods Co., Ltd.",
         "country": "CN",
         "city": "Xiamen",
-        "lead_days": 60
+        "lead_days": 60,
+        "email": "sales@everbright-sports.cn"
       }
     ],
     "products": [

@@ -87,9 +87,13 @@ OWNER_LOGINS = [login for login, *_rest, api_key in USERS if not api_key]
 TAIYUAN = 'Tai-Yuan Forge & Shaft Co., Ltd.'
 SAIGON = 'Saigon Grip Works Co., Ltd.'
 SUPPLIERS = [
-    # name, city, country xmlid, tax id, supplier lead time in days
-    (TAIYUAN, 'Kaohsiung', 'base.tw', '84149738', 42),
-    (SAIGON, 'Ho Chi Minh City', 'base.vn', '0315829464', 35),
+    # name, city, country xmlid, tax id, supplier lead time in days, the company's own address,
+    # a contact person and her address. The gateway takes a message as the supplier's only when
+    # its sender has one of these addresses or their domains.
+    (TAIYUAN, 'Kaohsiung', 'base.tw', '84149738', 42, 'orders@taiyuan-forge.example',
+     'Mei-Ling Chen', 'meiling.chen@tyforge.com.tw'),
+    (SAIGON, 'Ho Chi Minh City', 'base.vn', '0315829464', 35, 'export@saigongrip.example',
+     'Linh Tran', 'linh.tran@saigongrip.com.vn'),
 ]
 
 HEAD = 'V1 forged iron head'
@@ -523,7 +527,7 @@ riku, elina = users['riku'], users['elina']
 
 suppliers = {}
 supplier_delay = {}
-for name, city, country_xmlid, vat, delay in SUPPLIERS:
+for name, city, country_xmlid, vat, delay, email, contact_name, contact_email in SUPPLIERS:
     # "Always" grouping: every replenishment need of the supplier lands on its open
     # request for quotation, so MO-1 and MO-2 share lines.
     suppliers[name] = env['res.partner'].create({
@@ -531,11 +535,17 @@ for name, city, country_xmlid, vat, delay in SUPPLIERS:
         'city': city,
         'country_id': env.ref(country_xmlid).id,
         'vat': vat,
+        'email': email,
         'group_rfq': 'all',
         'buyer_id': riku.id,
     })
+    env['res.partner'].create({'name': contact_name, 'parent_id': suppliers[name].id, 'email': contact_email})
     supplier_delay[name] = delay
 check(all(p.is_company for p in suppliers.values()), 'suppliers are companies')
+for name, *_rest, email, _contact_name, contact_email in SUPPLIERS:
+    members = env['res.partner'].search([('commercial_partner_id', '=', suppliers[name].id)])
+    check(sorted(members.mapped('email_normalized')) == sorted([email, contact_email]),
+          f"{name} has its own address and its contact's")
 
 products = {}
 for name, code, cost, supplier in COMPONENTS:

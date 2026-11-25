@@ -27,6 +27,7 @@ class AppServiceProvider extends ServiceProvider
             (string) config('gateway.mailbox.path'),
             $app->make(PdfText::class),
             $app->make(Cache::class),
+            config('gateway.mailbox.authserv_id'),
         ));
     }
 

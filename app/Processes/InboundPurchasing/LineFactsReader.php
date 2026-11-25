@@ -21,6 +21,9 @@ final class LineFactsReader
 
     private const LINE_FIELDS = ['order_id', 'product_id', 'product_qty', 'date_planned', 'date_promised', 'x_confirmed_qty', 'x_confirmed_date', 'move_dest_ids'];
 
+    /** More partners than any one company has. Addresses beyond it do not count, so their senders wait for a person. */
+    private const ORGANIZATION_LIMIT = 1000;
+
     public function __construct(private readonly OdooClient $odoo) {}
 
     /**
@@ -36,6 +39,8 @@ final class LineFactsReader
             ?? throw new InputError("The purchase.order.line {$lineId} has no product, so it is a section or a note and not a line to change.");
         $order = $this->odoo->read($actor, 'purchase.order', [self::id($line['order_id'])], ['name', 'partner_ref', 'partner_id', 'state'])[0];
         $product = $this->odoo->read($actor, 'product.product', [$productId], ['default_code', 'name', 'seller_ids'])[0];
+        $supplierId = self::id($order['partner_id']);
+        $supplier = $supplierId === null ? ['name' => '', 'addresses' => []] : $this->supplier($actor, $supplierId);
 
         return new LineFacts(
             lineId: $lineId,
@@ -45,14 +50,48 @@ final class LineFactsReader
             productId: $productId,
             productName: (string) $product['name'],
             productCode: self::text($product['default_code']),
-            productNames: $this->productNames($actor, $product, $productId, self::id($order['partner_id'])),
+            productNames: $this->productNames($actor, $product, $productId, $supplierId),
             orderedQty: (float) $line['product_qty'],
             plannedDate: self::localDate($line['date_planned']),
             requestedDate: self::localDate($line['date_promised']),
             confirmedQty: $line['x_confirmed_qty'] === false ? null : (float) $line['x_confirmed_qty'],
             confirmedDate: self::localDate($line['x_confirmed_date']),
             waiting: $this->waiting($actor, $line['move_dest_ids']),
+            supplierName: $supplier['name'],
+            supplierAddresses: $supplier['addresses'],
         );
+    }
+
+    /**
+     * The company the order's supplier belongs to, which is the supplier
+     * itself or the company of a contact person, with the email addresses of
+     * that company and of every contact under it. A delivery, invoice or
+     * other address under the company is left out, because it often holds
+     * the address of a forwarder or an accountant, whose whole domain would
+     * then pass as the supplier's. An archived contact is not read, so its
+     * address stops counting.
+     *
+     * @return array{name: string, addresses: list<string>}
+     */
+    private function supplier(Actor $actor, int $supplierId): array
+    {
+        $partner = $this->odoo->read($actor, 'res.partner', [$supplierId], ['name', 'commercial_partner_id'])[0];
+        $companyId = self::id($partner['commercial_partner_id']) ?? $supplierId;
+        $name = (string) $partner['name'];
+        $addresses = [];
+
+        foreach ($this->odoo->searchRead($actor, 'res.partner', [['commercial_partner_id', '=', $companyId], ['type', '=', 'contact']], ['name', 'email_normalized'], self::ORGANIZATION_LIMIT) as $member) {
+            if ($member['id'] === $companyId) {
+                $name = (string) $member['name'];
+            }
+
+            $addresses[] = self::text($member['email_normalized']);
+        }
+
+        return [
+            'name' => $name,
+            'addresses' => array_values(array_unique(array_map(strtolower(...), array_filter($addresses, fn (?string $address): bool => $address !== null)))),
+        ];
     }
 
     /**

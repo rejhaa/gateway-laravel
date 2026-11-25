@@ -47,6 +47,7 @@ Both rules apply POL-1 to a write on one `purchase.order.line`. Each failed cond
 | Only the three fields are written | "the change is more than the planned date and the confirmed quantity and date" |
 | The quote was found, names the line's product, and states each written value | "no quoted passage that names {product} states the {field} {value} unambiguously" |
 | The document has a text layer | "the document has no text layer, so the quote was not checked" |
+| The cited message comes from the order's supplier | one of the four phrases under "Who sent the message" |
 | The cited message names the order | "the message does not name the order {name} or the supplier's reference {partner_ref}" |
 | No newer uncited message names the order | "a later message ({subjects}) also names the order" |
 | No applied rule-tier proposal cites this message for this line | "the same message was already applied to the line by rule in proposal {id}" |
@@ -61,6 +62,24 @@ How the gateway reads these conditions:
 - A date is stated unambiguously when it reads the same in every date format. ISO dates and dates with a month name and a year count as written. A date without a year does not count. An all-numeric date with a separator (`a/b/yyyy`, `a.b.yyyy`, `a-b-yyyy`) counts only when one of its first two parts is over 12 or both are equal. So `03/04/2026` does not count and `29.11.2026` does.
 - A message names the order when the order's `name` or `partner_ref` appears in its subject, body or attachment text as a whole token, with no letter or digit directly before or after it. A name shorter than 4 characters is ignored.
 - A newer uncited message is any message in the mailbox that is newer than the cited one and names the order.
+
+### Who sent the message
+
+A rule applies a write only when the cited message comes from the order's supplier. The gateway checks this in the order of the table and gives the first phrase that fits.
+
+| Check | Phrase when it fails |
+|---|---|
+| The message has one From header with one address | "the message has no single sender address" |
+| The supplier has an email address in Odoo | "{supplier} has no email address in Odoo to check the sender against" |
+| The sender's address belongs to the supplier | "the sender {address} is not an address or a domain of {supplier} in Odoo" |
+| The mail server verified the sender | "the mail server did not verify that the message comes from {address}" |
+
+- The supplier is the company the order's `partner_id` belongs to, which is its `commercial_partner_id`. The supplier's addresses are the email addresses of that company and of every contact under it, as Odoo keeps them in `email_normalized`. A delivery, invoice or other address under the company is not a contact and does not count, because it often holds the address of a forwarder or an accountant.
+- An address belongs to the supplier when it is one of those addresses, or when its domain is the domain of one of them. A domain where anyone can get an address, such as `gmail.com`, names no company, so at such a domain only the whole address counts. A subdomain is a different domain.
+- The sender writes the From header, so the address alone proves nothing. The sender is verified when the receiving mail server recorded that DMARC passed for the address's domain, or that DKIM or SPF passed for that same domain. A DKIM or SPF pass for another domain does not count, because every sender passes both for a domain of their own. A DMARC fail for the address's domain means the sender is not verified, whatever else the server recorded.
+- The name shown in a From header is the sender's choice and decides nothing. The approval screens show the address after the name, and mark a sender the mail server did not verify with "sender not verified" on every proposal, whatever its reasons.
+
+A forwarder is not the supplier, and neither is a colleague who forwards a supplier's document. A change proposed from such a message waits for Riku, however small it is.
 
 ## rule:confirmation-as-ordered
 
@@ -98,7 +117,8 @@ The gateway reads these as Riku and never takes them from the agent:
 - The order's `name`, `partner_ref`, `partner_id` and `state`.
 - The product's names, as listed under the shared conditions.
 - The waiting manufacturing orders, through the `stock.move` records in `move_dest_ids` and their `raw_material_production_id`, with each `mrp.production`'s `name` and `date_start` and the move's `product_uom_qty` as its need.
-- The cited message's date, and every message newer than it that names the order.
+- The supplier's company and its email addresses, as listed under "Who sent the message".
+- The cited message's date and sender, whether the mail server verified the sender, and every message newer than it that names the order.
 
 ## When Riku decides
 

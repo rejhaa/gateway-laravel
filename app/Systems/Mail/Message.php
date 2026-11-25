@@ -9,6 +9,10 @@ use Carbon\CarbonImmutable;
 /**
  * One mail message. The id is derived from the Message-ID header, so nothing in
  * it shows where the mail is stored.
+ *
+ * The sender writes the From header, so its text proves nothing. The mailbox
+ * sets fromVerified when the receiving mail server found that the message
+ * comes from the domain of fromAddress.
  */
 final readonly class Message
 {
@@ -16,6 +20,7 @@ final readonly class Message
      * @param  string  $from  as written in the header, such as "Name <address>"
      * @param  string  $to  every recipient, comma-separated
      * @param  list<Attachment>  $attachments
+     * @param  string|null  $fromAddress  the one address in the From header in lowercase, null when it holds none or several
      */
     public function __construct(
         public string $id,
@@ -25,6 +30,8 @@ final readonly class Message
         public CarbonImmutable $date,
         public string $body,
         public array $attachments = [],
+        public ?string $fromAddress = null,
+        public bool $fromVerified = false,
     ) {}
 
     /**

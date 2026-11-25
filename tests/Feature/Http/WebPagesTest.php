@@ -61,6 +61,29 @@ it('draws an agent-written title containing HTML as text', function (): void {
         ->assertDontSee('<b>heads</b>', false);
 });
 
+// Bug: Riku sees only the name the sender chose, so a stranger who calls themselves the supplier looks like the supplier.
+it('shows the sender\'s address after the name on the approval page', function (): void {
+    Inbound::service()->propose(Inbound::agent(), Inbound::partial());
+
+    Livewire::actingAs(User::primary())
+        ->test(Approvals::class)
+        ->assertSeeInOrder(['Tai-Yuan Forge & Shaft', 'sales@taiyuan.example', 'Order confirmation P00104'])
+        ->assertDontSee('sender not verified');
+});
+
+// Bug: a forged sender looks like the supplier on a proposal whose reasons say nothing about the sender,
+// as with the rule tier off or on a bill dispute.
+it('marks a sender the mail server did not verify on the approval page', function (): void {
+    config(['gateway.rule_tier' => false]);
+    Inbound::mailbox(Inbound::message(fromVerified: false));
+    Inbound::service()->propose(Inbound::agent(), Inbound::input());
+
+    Livewire::actingAs(User::primary())
+        ->test(Approvals::class)
+        ->assertSee('You are asked because the rule tier is switched off.')
+        ->assertSeeInOrder(['sales@taiyuan.example', 'sender not verified', 'Order confirmation P00104']);
+});
+
 // Bug: a click on "Yes, do it" writes twice, or the block stays open as if nothing happened.
 it('approves from the page once and collapses the block to its line', function (): void {
     $proposal = Inbound::service()->propose(Inbound::agent(), Inbound::partial())->proposal;

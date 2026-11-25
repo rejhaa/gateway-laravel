@@ -199,6 +199,7 @@ for i, row in enumerate(case_suppliers, 1):
         'name': row['name'],
         'city': row['city'],
         'country_id': country_of(row['country']).id,
+        'email': row.get('email') or False,
         'group_rfq': 'all',
         'buyer_id': riku.id,
     })

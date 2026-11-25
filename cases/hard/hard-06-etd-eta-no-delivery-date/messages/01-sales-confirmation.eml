@@ -1,3 +1,6 @@
+Authentication-Results: mx.vuoksigolf.example; spf=pass
+ smtp.mailfrom=everbright-sports.cn; dkim=pass header.d=everbright-sports.cn;
+ dmarc=pass header.from=everbright-sports.cn
 From: Sunny Wu <sunny.wu@everbright-sports.cn>
 To: Vuoksi Golf purchasing <purchasing@vuoksigolf.fi>
 Cc: Riku Lindgren <riku.lindgren@vuoksigolf.fi>

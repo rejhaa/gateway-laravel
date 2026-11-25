@@ -23,10 +23,20 @@ afterEach(function (): void {
 
 /**
  * @param  array<string, string>  $attachments  file name to PDF content
+ * @param  string  $from  the value of the From header
+ * @param  string|null  $authenticationResults  the value of an Authentication-Results header, or none
  */
-function eml(string $messageId, string $date, string $subject, string $body, array $attachments = []): string
-{
-    $headers = "From: =?UTF-8?Q?Tai-Yuan_Forge_&_Shaft?= <sales@taiyuan.example>\r\n"
+function eml(
+    string $messageId,
+    string $date,
+    string $subject,
+    string $body,
+    array $attachments = [],
+    string $from = '=?UTF-8?Q?Tai-Yuan_Forge_&_Shaft?= <sales@taiyuan.example>',
+    ?string $authenticationResults = null,
+): string {
+    $headers = ($authenticationResults === null ? '' : "Authentication-Results: {$authenticationResults}\r\n")
+        ."From: {$from}\r\n"
         ."To: Riku Lindgren <riku@vuoksi.example>\r\n"
         ."Subject: {$subject}\r\n"
         ."Date: {$date}\r\n"
@@ -122,4 +132,47 @@ it('serves a message from the cache until the file changes', function (): void {
         ->and($cached)->toBeInstanceOf(Message::class)
         ->and($cached->subject)->toBe('First')
         ->and($changed)->toBe('Second');
+});
+
+// Bug: a forged From header counts as the supplier, or the supplier's address in a display name counts as the sender.
+it('takes the sender from the one From address and its verification from the receiving server\'s header', function (string $from, ?string $results, ?string $address, bool $verified): void {
+    config(['gateway.mailbox.authserv_id' => 'mx.vuoksi.example']);
+    File::put($this->directory.'/a.eml', eml('a@example', 'Mon, 03 Nov 2026 09:00:00 +0200', 'Order confirmation', 'Body', from: $from, authenticationResults: $results));
+
+    $message = app(Mailbox::class)->messages()[0];
+
+    expect($message->fromAddress)->toBe($address)
+        ->and($message->fromVerified)->toBe($verified);
+})->with([
+    'DMARC passed for the From domain' => ['Tai-Yuan Forge <Sales@Taiyuan.example>', 'mx.vuoksi.example; dmarc=pass header.from=taiyuan.example', 'sales@taiyuan.example', true],
+    'DMARC failed for the From domain' => ['Tai-Yuan Forge <sales@taiyuan.example>', 'mx.vuoksi.example; dmarc=fail header.from=taiyuan.example', 'sales@taiyuan.example', false],
+    'the receiving server added no header' => ['Tai-Yuan Forge <sales@taiyuan.example>', null, 'sales@taiyuan.example', false],
+    'another server\'s header says it passed' => ['Tai-Yuan Forge <sales@taiyuan.example>', 'mx.attacker.example; dmarc=pass header.from=taiyuan.example', 'sales@taiyuan.example', false],
+    'the supplier\'s address is the display name' => ['"sales@taiyuan.example" <x@attacker.example>', 'mx.vuoksi.example; dmarc=pass header.from=attacker.example', 'x@attacker.example', true],
+    'two addresses in the From header' => ['sales@taiyuan.example, x@attacker.example', 'mx.vuoksi.example; dmarc=pass header.from=taiyuan.example', null, false],
+    'two From headers' => ["sales@taiyuan.example\r\nFrom: x@attacker.example", 'mx.vuoksi.example; dmarc=pass header.from=taiyuan.example', null, false],
+]);
+
+// Bug: with no receiving server configured, a header from any server verifies a sender.
+it('verifies no sender when no receiving server id is configured', function (): void {
+    config(['gateway.mailbox.authserv_id' => null]);
+    File::put($this->directory.'/a.eml', eml('a@example', 'Mon, 03 Nov 2026 09:00:00 +0200', 'Order confirmation', 'Body', authenticationResults: 'mx.vuoksi.example; dmarc=pass header.from=taiyuan.example'));
+
+    $message = app(Mailbox::class)->messages()[0];
+
+    expect($message->fromAddress)->toBe('sales@taiyuan.example')
+        ->and($message->fromVerified)->toBeFalse();
+});
+
+// Bug: a sender verified under one receiving server id stays verified from the cache after the id changes.
+it('reads a cached message again when the receiving server id changes', function (): void {
+    File::put($this->directory.'/a.eml', eml('a@example', 'Mon, 03 Nov 2026 09:00:00 +0200', 'Order confirmation', 'Body', authenticationResults: 'mx.old.example; dmarc=pass header.from=taiyuan.example'));
+    $underOldId = new FileMailbox($this->directory, app(PdfText::class), Cache::store(), 'mx.old.example');
+    $underNewId = new FileMailbox($this->directory, app(PdfText::class), Cache::store(), 'mx.vuoksi.example');
+
+    $verifiedBefore = $underOldId->messages()[0]->fromVerified;
+    $verifiedAfter = $underNewId->messages()[0]->fromVerified;
+
+    expect($verifiedBefore)->toBeTrue()
+        ->and($verifiedAfter)->toBeFalse();
 });

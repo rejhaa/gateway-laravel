@@ -20,7 +20,7 @@ final readonly class RuleCase
     /**
      * @param  array<string, mixed>  $values  the written fields
      * @param  array<string, mixed>  $facts  LineFacts constructor arguments
-     * @param  array<string, mixed>  $evidence  quote, found, subject, laterSubjects and appliedByRule
+     * @param  array<string, mixed>  $evidence  quote, found, subject, fromAddress, fromVerified, laterSubjects and appliedByRule
      */
     private function __construct(
         public array $values,
@@ -78,6 +78,8 @@ final readonly class RuleCase
     {
         $message = fn (string $subject, string $body, string $date): Message => new Message(
             Message::idFor($subject.$date), 'sales@taiyuan.example', 'riku@vuoksi.example', $subject, CarbonImmutable::parse($date), $body,
+            fromAddress: $this->evidence['fromAddress'],
+            fromVerified: $this->evidence['fromVerified'],
         );
 
         return new Evidence(
@@ -109,12 +111,22 @@ final readonly class RuleCase
             'confirmedQty' => null,
             'confirmedDate' => null,
             'waiting' => [],
+            'supplierName' => 'Tai-Yuan Forge & Shaft',
+            'supplierAddresses' => ['sales@taiyuan.example', 'mei.lin@taiyuan.example'],
         ];
     }
 
     /** @return array<string, mixed> */
     private static function quoted(string $quote): array
     {
-        return ['quote' => $quote, 'found' => true, 'subject' => 'Order confirmation P00104', 'laterSubjects' => [], 'appliedByRule' => null];
+        return [
+            'quote' => $quote,
+            'found' => true,
+            'subject' => 'Order confirmation P00104',
+            'fromAddress' => 'sales@taiyuan.example',
+            'fromVerified' => true,
+            'laterSubjects' => [],
+            'appliedByRule' => null,
+        ];
     }
 }

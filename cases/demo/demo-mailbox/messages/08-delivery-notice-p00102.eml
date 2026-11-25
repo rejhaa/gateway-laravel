@@ -1,3 +1,6 @@
+Authentication-Results: mx.vuoksigolf.example; spf=pass
+ smtp.mailfrom=nordicfreight.example; dkim=pass
+ header.d=nordicfreight.example; dmarc=pass header.from=nordicfreight.example
 From: Petra Nyman <ops@nordicfreight.example>
 To: Vuoksi Golf purchasing <purchasing@vuoksigolf.fi>
 Subject: Delivery notice, shipment TYF-4471, your order P00102

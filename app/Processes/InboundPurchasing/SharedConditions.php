@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Processes\InboundPurchasing;
 
 use App\Evidence\QuoteChecker;
+use App\Evidence\SenderChecker;
 use App\Gateway\Evidence;
 use App\Gateway\ProposedWrite;
 use App\Systems\Mail\Message;
@@ -55,6 +56,12 @@ final class SharedConditions
             $failures[] = 'the document has no text layer, so the quote was not checked';
         }
 
+        $sender = self::senderFailure($facts, $evidence->message);
+
+        if ($sender !== null) {
+            $failures[] = $sender;
+        }
+
         $references = array_values(array_filter([$facts->orderName, $facts->partnerRef]));
 
         if (! $checker->namesOrder(self::text($evidence->message), $references)) {
@@ -78,6 +85,34 @@ final class SharedConditions
         }
 
         return $failures;
+    }
+
+    /**
+     * The cited message has to come from the order's supplier. Its one sender
+     * address has to belong to the supplier's company in Odoo, and the
+     * receiving mail server has to have verified it, because the sender
+     * writes the From header. A forwarder or a colleague who passes a
+     * document on is not the supplier, so such a message waits for a person.
+     */
+    private static function senderFailure(LineFacts $facts, Message $message): ?string
+    {
+        if ($message->fromAddress === null) {
+            return 'the message has no single sender address';
+        }
+
+        if ($facts->supplierAddresses === []) {
+            return "{$facts->supplierName} has no email address in Odoo to check the sender against";
+        }
+
+        if (! (new SenderChecker)->belongsTo($message->fromAddress, $facts->supplierAddresses)) {
+            return "the sender {$message->fromAddress} is not an address or a domain of {$facts->supplierName} in Odoo";
+        }
+
+        if (! $message->fromVerified) {
+            return "the mail server did not verify that the message comes from {$message->fromAddress}";
+        }
+
+        return null;
     }
 
     /** The subject, the body and every attachment line, where a message may name the order. */

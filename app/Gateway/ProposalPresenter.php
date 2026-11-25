@@ -91,7 +91,7 @@ final class ProposalPresenter
      *
      * @param  Collection<int, Proposal>  $proposals
      * @return list<array{
-     *     message: array{id: string, from: string|null, sender: string|null, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>},
+     *     message: array{id: string, from: string|null, sender: string|null, address: string|null, verified: bool|null, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>},
      *     proposals: Collection<int, Proposal>,
      * }>
      */
@@ -258,9 +258,11 @@ final class ProposalPresenter
 
     /**
      * The day is short, for the card ("5 Nov"). The time is absolute, for the
-     * web page ("5 Nov 2026, 11:12").
+     * web page ("5 Nov 2026, 11:12"). The sender is the display name, which
+     * the sender chose, so the screens show the address beside it and say
+     * when the mail server did not verify it.
      *
-     * @return array{id: string, from: string|null, sender: string|null, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>}
+     * @return array{id: string, from: string|null, sender: string|null, address: string|null, verified: bool|null, subject: string|null, date: string|null, day: string|null, time: string|null, body: string|null, attachments: list<string>}
      */
     private static function message(string $id, ?Message $message): array
     {
@@ -269,7 +271,9 @@ final class ProposalPresenter
         return [
             'id' => $id,
             'from' => $message?->from,
-            'sender' => $message === null ? null : self::sender($message->from),
+            'sender' => $message === null ? null : self::sender($message),
+            'address' => $message?->fromAddress,
+            'verified' => $message?->fromVerified,
             'subject' => $message?->subject,
             'date' => $date?->toIso8601String(),
             'day' => $date?->format('j M'),
@@ -279,12 +283,16 @@ final class ProposalPresenter
         ];
     }
 
-    /** The display name of a From header, or its address when it has no name. */
-    private static function sender(string $from): string
+    /**
+     * The display name of a From header. A header with no name, or with a
+     * name that is written as an address, gives the real address, so a name
+     * such as "orders@supplier.example" cannot stand in for it.
+     */
+    private static function sender(Message $message): string
     {
-        $name = trim(Str::before($from, '<'), " \t\"");
+        $name = trim(Str::before($message->from, '<'), " \t\"");
 
-        return $name !== '' ? $name : trim($from, " \t<>");
+        return $name !== '' && ! str_contains($name, '@') ? $name : $message->fromAddress ?? trim($message->from, " \t<>");
     }
 
     /** The first name of the user the gateway acts for, such as Riku. */

@@ -436,6 +436,7 @@ def build_eml(n: int, m: dict, pdf: bytes | None) -> bytes:
     if m["kind"] == "spike":
         return spike.build_eml(CASE_ID, n, m, pdf)
     msg = EmailMessage(policy=SMTP)
+    msg["Authentication-Results"] = spike.authentication_results(m["sender"][1])
     msg["From"] = formataddr(m["sender"])
     msg["To"] = ", ".join([spike.TO, *m.get("to", [])])
     msg["Subject"] = m["subject"]

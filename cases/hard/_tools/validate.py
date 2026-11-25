@@ -53,7 +53,7 @@ def check_case(c: dict, pdfs: dict[str, bytes]) -> list[str]:
     if list(s) != ["suppliers", "products", "vendor_codes", "manufacturing_orders", "purchase_orders"]:
         err(f"setup keys {list(s)}")
     for x in s["suppliers"]:
-        if set(x) != {"name", "country", "city", "lead_days"} or x["name"] in BASE_SUPPLIERS:
+        if set(x) - {"email"} != {"name", "country", "city", "lead_days"} or x["name"] in BASE_SUPPLIERS:
             err(f"supplier {x}")
     suppliers = BASE_SUPPLIERS | {x["name"] for x in s["suppliers"]}
     for x in s["products"]:
